@@ -1,0 +1,28 @@
+policies:
+  - python: "filepath = /usr/bin/python3.12 | libs = /usr/lib/python3.12/, /usr/local/lib/python3.12/dist-packages/, /usr/lib/python3/dist-packages/, /usr/lib/python3.12/dist-packages/, /home/nathan/go/src/github.com/bomfather/agent-private/example/pythonlib/"
+    python_argv_exact:
+      - /usr/bin/python3.12
+      - /home/nathan/go/src/github.com/bomfather/agent-private/example/read_protected.py
+      - --mode
+      - prod
+    python_cwd: /home/nathan/go/src/github.com/bomfather/agent-private/example
+    can_access_dirs:
+      - "/home/nathan/go/src/github.com/bomfather/agent-private/example/protected/protected1:read"
+  - executable: "filepath = /usr/bin/curl"
+    is_allowed_to_access_ip:
+      - "1.1.1.1:443"
+  - executable: "filepath = /usr/bin/wget"
+    is_allowed_to_access_ip:
+      - "74.125.201.101"
+      - "142.251.152.119"
+  - executable: "filepath = /usr/bin/cat"
+    can_access_dirs:
+     - "/home/naveen/go/src/github.com/bomfather/agent-private/example/protected/protected1/protected.txt:read"
+    # fsverity_digest pins the trusted digest for this binary.
+    # Obtain it with: fsverity measure /path/to/binary
+    fsverity_digest: "sha256:bfbdbae0bd2e9a83a416a338661fdad056570ba62c08f7ad11bfebb8eef68ad4"
+flags:
+  security_level: "sandbox"
+  disable_bpf_ops: true
+  enable_openat: false
+  secure_maps: false

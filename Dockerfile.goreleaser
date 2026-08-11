@@ -1,0 +1,10 @@
+# Release image built by GoReleaser dockers_v2.
+# GoReleaser copies the prebuilt binary into a temp context at
+# ${TARGETPLATFORM}/bomfather-agent — do not compile here.
+# Root distroless (not :nonroot) is required for eBPF kernel access.
+FROM gcr.io/distroless/static-debian12
+
+ARG TARGETPLATFORM
+COPY ${TARGETPLATFORM}/bomfather-agent /agent
+
+ENTRYPOINT ["/agent"]

@@ -1,0 +1,172 @@
+// Event ingestion service for agent-to-server communication.
+// Replaces direct NATS exposure with gRPC bidirectional streaming.
+//
+// Message definitions are aligned with agent/proto/events.proto for compatibility.
+// The gRPC service adds streaming capabilities on top of the same event structures.
+syntax = "proto3";
+
+package ingestion;
+
+option go_package = "github.com/bomfather/bomfather/agent/proto;proto";
+
+// EventIngestion handles agent-to-server event streaming.
+// Uses bidirectional streaming for high throughput with batch acknowledgments.
+service EventIngestion {
+  // StreamEvents is the primary method for agents to send events.
+  // Agent sends batches of events, server responds with acknowledgments.
+  // Connection is long-lived; agent should reconnect with jittered backoff on failure.
+  rpc StreamEvents(stream EventBatch) returns (stream BatchAck);
+
+  // GetOrCreateNode registers a node and returns its ID.
+  // Called once at agent startup before streaming events.
+  rpc GetOrCreateNode(GetOrCreateNodeRequest) returns (GetOrCreateNodeResponse);
+}
+
+// ============================================================================
+// Core identity structures (aligned with agent/proto/events.proto)
+// ============================================================================
+
+// ContainerID uniquely identifies a container within a boot session.
+message ContainerID {
+  uint64 cgroup_id = 1;
+  uint64 timestamp = 2;
+}
+
+// ProcessID uniquely identifies a process within a container.
+message ProcessID {
+  uint32 tgid = 1;
+  uint64 start_time = 2;
+  ContainerID container = 3;
+  string boot_id = 4;
+}
+
+// ============================================================================
+// Event messages (aligned with agent/proto/events.proto)
+// ============================================================================
+
+// OpenatEvent represents a file access event.
+// Field numbers 1-4 match agent/proto/events.proto exactly.
+message OpenatEvent {
+  ProcessID process = 1;
+  string filename = 2;
+  uint32 open_mode = 3;
+  string exepath = 4;
+}
+
+// ExecveEvent represents a process execution event.
+// Field numbers 1-6 match agent/proto/events.proto exactly.
+message ExecveEvent {
+  string comm = 1;
+  string exepath = 2;
+  ProcessID process = 3;
+  ProcessID parent = 4;
+  repeated string argv = 5;
+  repeated string envp = 6;
+}
+
+// ViolationEvent represents a security policy violation.
+// Field numbers 1-5 match agent/proto/events.proto exactly.
+message ViolationEvent {
+  ProcessID process = 1;
+  uint64 timestamp = 2;
+  uint32 type = 3;
+  string filename = 4;
+  string exepath = 5;
+}
+
+// ============================================================================
+// Streaming request/response messages (gRPC-specific)
+// ============================================================================
+
+// EventBatch contains a batch of events from an agent.
+// Metadata (node_id, container_path, hash) is included per-event in wrappers.
+// All events in a batch are acked or nacked together.
+message EventBatch {
+  // Monotonically increasing sequence number for ordering and resume.
+  uint64 sequence = 1;
+
+  // Unique identifier for this batch (UUID) for deduplication.
+  string batch_id = 2;
+
+  // Timestamp when batch was created (nanoseconds since epoch).
+  int64 timestamp_nanos = 3;
+
+  // File access events with metadata (wraps OpenatEvent like PushOpenatRequest).
+  repeated OpenatEventWrapper openat_events = 4;
+
+  // Process execution events with metadata (wraps ExecveEvent like PushExecveRequest).
+  repeated ExecveEventWrapper execve_events = 5;
+
+  // Security violation events with metadata (wraps ViolationEvent like PushViolationRequest).
+  repeated ViolationEventWrapper violations = 6;
+}
+
+// OpenatEventWrapper wraps OpenatEvent with per-event metadata.
+// Mirrors PushOpenatRequest from agent/proto/events.proto (minus api_key, handled in gRPC metadata).
+message OpenatEventWrapper {
+  OpenatEvent event = 1;
+  string hash = 2;
+  string container_path = 3;  // namespace:pod:containername
+  uint64 node_id = 4;         // Node identifier (matches GetOrCreateNodeResponse.node_id)
+}
+
+// ExecveEventWrapper wraps ExecveEvent with per-event metadata.
+// Mirrors PushExecveRequest from agent/proto/events.proto (minus api_key).
+message ExecveEventWrapper {
+  ExecveEvent event = 1;
+  string container_path = 2;  // namespace:pod:containername
+  uint64 node_id = 3;         // Node identifier (matches GetOrCreateNodeResponse.node_id)
+}
+
+// ViolationEventWrapper wraps ViolationEvent with per-event metadata.
+// Mirrors PushViolationRequest from agent/proto/events.proto (minus api_key).
+message ViolationEventWrapper {
+  ViolationEvent event = 1;
+  string path = 2;
+  string container_path = 3;  // namespace:pod:containername
+  uint64 node_id = 4;         // Node identifier (matches GetOrCreateNodeResponse.node_id)
+}
+
+// ErrorCode indicates why a batch was rejected.
+// Client uses this to decide whether to retry.
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;      // Success (no error)
+  ERROR_CODE_INVALID_API_KEY = 1;  // Permanent: do not retry
+  ERROR_CODE_RATE_LIMITED = 2;     // Temporary: backoff and retry
+  ERROR_CODE_NATS_UNAVAILABLE = 3; // Temporary: backoff and retry
+  ERROR_CODE_INVALID_BATCH = 4;    // Permanent: malformed data, do not retry
+  ERROR_CODE_SERVER_OVERLOADED = 5;// Temporary: backoff and retry
+  ERROR_CODE_INTERNAL = 6;         // Permanent: server misconfiguration, do not retry
+}
+
+// BatchAck acknowledges receipt of events up to a sequence number.
+message BatchAck {
+  // All events with sequence <= acked_through are persisted.
+  uint64 acked_through = 1;
+
+  // Structured error code for programmatic handling.
+  ErrorCode error_code = 2;
+
+  // Human-readable error message for logging/debugging.
+  string error_message = 3;
+}
+
+// ============================================================================
+// Node management (gRPC version of agent/proto GetOrCreateNode*)
+// ============================================================================
+
+// GetOrCreateNodeRequest registers a node with the server.
+// Note: api_key is passed in gRPC metadata, not in the message body.
+message GetOrCreateNodeRequest {
+  string hostname = 1;
+  int64 timestamp_nanos = 2;
+  string agent_version = 3;  // Agent software version (e.g., "v1.2.3 (commit: abc1234)")
+}
+
+// GetOrCreateNodeResponse returns the node ID.
+// Uses structured ErrorCode instead of string error for programmatic handling.
+message GetOrCreateNodeResponse {
+  uint64 node_id = 1;  // Matches server-side Node.ID type (uint)
+  ErrorCode error_code = 2;
+  string error_message = 3;
+}

@@ -1,0 +1,22 @@
+# Build artifacts
+agent
+bpf/trace.o
+bpf/*.o
+coverage.out
+coverage.html
+*.out
+*.test
+
+# Generated protobuf code (rebuilt inside the image)
+proto/ingestion.pb.go
+proto/ingestion_grpc.pb.go
+
+# VCS / CI metadata not needed for the build
+.git
+.github
+.gitignore
+
+# Editor / OS
+.DS_Store
+*.swp
+*.swo

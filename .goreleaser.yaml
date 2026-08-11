@@ -1,0 +1,78 @@
+version: 2
+
+project_name: agent
+
+before:
+  hooks:
+    - git submodule update --init --recursive
+    - make tools bpf proto
+
+builds:
+  - id: agent
+    main: ./main.go
+    binary: bomfather-agent
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -mod=vendor
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/bomfather/bomfather/agent/grpcclient.Version={{ .Version }}
+      - -X github.com/bomfather/bomfather/agent/grpcclient.Commit={{ .ShortCommit }}
+
+archives:
+  - id: agent
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+docker_digest:
+  name_template: digests.txt
+
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sigstore.json"
+    args:
+      - sign-blob
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+    output: true
+
+docker_signs:
+  - cmd: cosign
+    output: true
+    args:
+      - sign
+      - "${artifact}@${digest}"
+      - "--yes"
+
+changelog:
+  use: github
+
+release:
+  mode: replace
+
+dockers_v2:
+  - id: agent
+    dockerfile: Dockerfile.goreleaser
+    ids:
+      - agent
+    images:
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY }}"
+    tags:
+      - "{{ .Tag }}"
+      - "{{ if not .Prerelease }}latest{{ end }}"
+    platforms:
+      - linux/amd64
+      - linux/arm64

@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: bomfather-test
+  namespace: default
+  labels:
+    app: bomfather-test
+spec:
+  containers:
+    - name: test-container
+      image: busybox:latest
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          echo "Starting test loop..."
+          mkdir -p /foo/bar
+          while true; do
+            echo "=== Writing to foo/bar/x at $(date) ==="
+            echo "test-$(date +%s)" > /foo/bar/x
+            cat /foo/bar/x
+            echo "=== Sleeping 5 seconds ==="
+            sleep 5
+          done
+      resources:
+        limits:
+          memory: "64Mi"
+          cpu: "100m"
+  restartPolicy: Never
+
