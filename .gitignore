@@ -1,0 +1,23 @@
+# Build artifacts
+/agent
+
+# eBPF build artifacts
+/bpf/trace.o
+/bpf/*.o
+
+# Generated protobuf code
+/proto/ingestion.pb.go
+/proto/ingestion_grpc.pb.go
+
+# Test / coverage output
+*.out
+*.test
+coverage.out
+coverage.html
+
+
+# Editor / OS
+.vscode/
+.DS_Store
+*.swp
+*.swo

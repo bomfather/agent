@@ -1,0 +1,11 @@
+# Policy for dual-connect-test manual verification.
+# Build: go build -o /tmp/dual-connect-test ./example/dual-connect-test
+policies:
+  - executable: "filepath = /tmp/dual-connect-test"
+attributes:
+  - path: "type = executable | filepath = /tmp/dual-connect-test"
+    can_only_access_ips:
+      - "127.0.0.1:19001"
+flags:
+  # sandbox (or kill) required: check_has_violated_policy only blocks at level >= 2
+  security_level: "sandbox"
