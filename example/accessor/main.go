@@ -2,66 +2,32 @@ package main
 
 import (
 	"fmt"
-	"io"
-	"net"
 	"os"
-	"time"
+	"path/filepath"
 )
 
 const protectedPath = "../protected/protected1/protected.txt"
 
-func readProtectedFile() {
-	file, err := os.Open(protectedPath)
+func readProtectedFile() error {
+	executablePath, err := os.Executable()
 	if err != nil {
-		return
-	}
-	defer file.Close()
-
-	output, err := io.ReadAll(file)
-	if err != nil {
-		fmt.Println(err)
-		return
+		return fmt.Errorf("resolve executable path: %w", err)
 	}
 
-	fmt.Println(string(output))
+	resolvedProtectedPath := filepath.Clean(filepath.Join(filepath.Dir(executablePath), protectedPath))
+
+	output, err := os.ReadFile(resolvedProtectedPath)
+	if err != nil {
+		return fmt.Errorf("read protected file %q: %w", resolvedProtectedPath, err)
+	}
+
+	fmt.Printf("Read %s:\n%s\n", resolvedProtectedPath, output)
+	return nil
 }
 
 func main() {
-	readProtectedFile()
-	readProtectedFile()
-
-	conn, err := net.Dial("tcp", "google.com:80")
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-	defer conn.Close()
-
-	go func() {
-		ticker := time.NewTicker(2 * time.Second)
-		defer ticker.Stop()
-
-		for {
-			request := "GET / HTTP/1.1\r\nHost: google.com\r\nConnection: keep-alive\r\n\r\n"
-			if _, err := conn.Write([]byte(request)); err != nil {
-				fmt.Println("write failed:", err)
-				return
-			}
-
-			<-ticker.C
-		}
-	}()
-
-	buffer := make([]byte, 4096)
-	for {
-		n, err := conn.Read(buffer)
-		if err != nil {
-			fmt.Println("read failed:", err)
-			return
-		}
-
-		if n > 0 {
-			fmt.Println(string(buffer[:n]))
-		}
+	if err := readProtectedFile(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to read protected file: %v\n", err)
+		os.Exit(1)
 	}
 }
