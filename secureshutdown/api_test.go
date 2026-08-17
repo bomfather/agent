@@ -14,33 +14,30 @@ import (
 	"time"
 
 	"github.com/bomfather/bomfather/agent/metrics"
-	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestHTTPMetricsMiddleware(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	registry, agentMetrics := metrics.NewRegistry()
 
-	r := gin.New()
-	r.Use(httpMetricsMiddleware(agentMetrics))
-	r.POST("/request", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"ok": true})
-	})
-	r.POST("/stop", func(c *gin.Context) {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "signature verification failed"})
-	})
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /request", withMetrics(agentMetrics, "/request", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}))
+	mux.HandleFunc("POST /stop", withMetrics(agentMetrics, "/stop", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "signature verification failed"})
+	}))
 
 	req := httptest.NewRequest(http.MethodPost, "/request", nil)
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
+	mux.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
 
 	stopReq := httptest.NewRequest(http.MethodPost, "/stop", nil)
 	stopW := httptest.NewRecorder()
-	r.ServeHTTP(stopW, stopReq)
+	mux.ServeHTTP(stopW, stopReq)
 	require.Equal(t, http.StatusUnauthorized, stopW.Code)
 
 	assert.Equal(t, float64(1), gatherCounter(t, registry, "bomfather_agent_secure_shutdown_http_requests_total", "200", "POST", "/request"))
@@ -48,16 +45,14 @@ func TestHTTPMetricsMiddleware(t *testing.T) {
 }
 
 func TestHTTPMetricsMiddlewareNilMetrics(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
-	r.Use(httpMetricsMiddleware(nil))
-	r.POST("/request", func(c *gin.Context) {
-		c.Status(http.StatusOK)
-	})
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /request", withMetrics(nil, "/request", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
 
 	req := httptest.NewRequest(http.MethodPost, "/request", nil)
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
+	mux.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
