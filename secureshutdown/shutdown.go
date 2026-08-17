@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"log/slog"
@@ -16,8 +17,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/gin-gonic/gin"
 )
 
 type ShutdownChallenge struct {
@@ -153,53 +152,56 @@ func (s *ChallengeStore) createChallenge() (string, error) {
 	return nonce, nil
 }
 
-func (s *ChallengeStore) request(c *gin.Context) {
+func (s *ChallengeStore) request(w http.ResponseWriter, r *http.Request) {
 	challenge, err := s.createChallenge()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create challenge"})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create challenge"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "request received, sign the challenge and hit the stop api with the sig and the nonce", "nonce": challenge})
+	writeJSON(w, http.StatusOK, map[string]string{
+		"message": "request received, sign the challenge and hit the stop api with the sig and the nonce",
+		"nonce":   challenge,
+	})
 }
 
-func (s *ChallengeStore) stop(c *gin.Context) {
+func (s *ChallengeStore) stop(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Nonce     string `json:"nonce" binding:"required"`
-		Signature string `json:"signature" binding:"required"`
+		Nonce     string `json:"nonce"`
+		Signature string `json:"signature"`
 	}
 
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request format"})
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Nonce == "" || req.Signature == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request format"})
 		return
 	}
 
 	// Get the challenge
 	challenge, exists := s.GetChallenge(req.Nonce)
 	if !exists {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid or expired nonce"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid or expired nonce"})
 		return
 	}
 
 	if atomic.LoadUint32(&challenge.used) != 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "nonce already used"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "nonce already used"})
 		return
 	}
 
 	// Check if expired
 	if time.Since(challenge.CreatedAt) > 5*time.Minute {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "nonce expired"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "nonce expired"})
 		return
 	}
 
 	// Verify signature
 	if err := s.VerifySignature(req.Nonce, req.Signature); err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "signature verification failed"})
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "signature verification failed"})
 		return
 	}
 
 	// Atomically mark as used only if still unused
 	if !atomic.CompareAndSwapUint32(&challenge.used, 0, 1) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "nonce already used concurrently"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "nonce already used concurrently"})
 		return
 	}
 
@@ -207,7 +209,7 @@ func (s *ChallengeStore) stop(c *gin.Context) {
 	s.StopCleanup()
 	s.logger.Info("Shutting down agent after secure shutdown")
 	s.triggerShutdown()
-	c.JSON(http.StatusOK, gin.H{"message": "shutdown initiated"})
+	writeJSON(w, http.StatusOK, map[string]string{"message": "shutdown initiated"})
 }
 
 func ParsePublicKey(publicKey string) (*rsa.PublicKey, error) {

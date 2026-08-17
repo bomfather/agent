@@ -16,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -185,18 +184,15 @@ func TestStopCleanup(t *testing.T) {
 }
 
 func TestHTTPRequestHandler(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	publicKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 	store := NewChallengeStore(logger, func() {}, &publicKey.PublicKey)
-
-	r := gin.New()
-	r.POST("/request", store.request)
+	h := newAPIHandler(store, nil)
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/request", nil)
-	r.ServeHTTP(w, req)
+	h.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	var resp map[string]interface{}
@@ -211,7 +207,6 @@ func TestHTTPRequestHandler(t *testing.T) {
 }
 
 func TestHTTPStopHandler(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	shutdownCalled := make(chan struct{}, 1)
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -220,6 +215,7 @@ func TestHTTPStopHandler(t *testing.T) {
 	store := NewChallengeStore(logger, func() {
 		shutdownCalled <- struct{}{}
 	}, publicKey)
+	h := newAPIHandler(store, nil)
 
 	// Create challenge first
 	nonce, err := store.createChallenge()
@@ -231,9 +227,6 @@ func TestHTTPStopHandler(t *testing.T) {
 	require.NoError(t, err)
 	sigStr := base64.StdEncoding.EncodeToString(signature)
 
-	r := gin.New()
-	r.POST("/stop", store.stop)
-
 	t.Run("Valid Request", func(t *testing.T) {
 		body := map[string]string{"nonce": nonce, "signature": sigStr}
 		jsonBody, _ := json.Marshal(body)
@@ -241,7 +234,7 @@ func TestHTTPStopHandler(t *testing.T) {
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest("POST", "/stop", bytes.NewReader(jsonBody))
 		req.Header.Set("Content-Type", "application/json")
-		r.ServeHTTP(w, req)
+		h.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
 		var resp map[string]interface{}
@@ -267,7 +260,7 @@ func TestHTTPStopHandler(t *testing.T) {
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest("POST", "/stop", bytes.NewReader([]byte("invalid json")))
 		req.Header.Set("Content-Type", "application/json")
-		r.ServeHTTP(w, req)
+		h.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		var resp map[string]interface{}
@@ -283,7 +276,7 @@ func TestHTTPStopHandler(t *testing.T) {
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest("POST", "/stop", bytes.NewReader(jsonBody))
 		req.Header.Set("Content-Type", "application/json")
-		r.ServeHTTP(w, req)
+		h.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		var resp map[string]interface{}
@@ -304,7 +297,7 @@ func TestHTTPStopHandler(t *testing.T) {
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest("POST", "/stop", bytes.NewReader(jsonBody))
 		req.Header.Set("Content-Type", "application/json")
-		r.ServeHTTP(w, req)
+		h.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		var resp map[string]interface{}
@@ -327,7 +320,7 @@ func TestHTTPStopHandler(t *testing.T) {
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest("POST", "/stop", bytes.NewReader(jsonBody))
 		req.Header.Set("Content-Type", "application/json")
-		r.ServeHTTP(w, req)
+		h.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		var resp map[string]interface{}
@@ -349,7 +342,7 @@ func TestHTTPStopHandler(t *testing.T) {
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest("POST", "/stop", bytes.NewReader(invalidSigJson))
 		req.Header.Set("Content-Type", "application/json")
-		r.ServeHTTP(w, req)
+		h.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusUnauthorized, w.Code)
 		var resp map[string]interface{}
@@ -369,13 +362,12 @@ func TestHTTPStopHandler(t *testing.T) {
 		testBody := map[string]string{"nonce": testNonce, "signature": testSigStr}
 		testJSON, _ := json.Marshal(testBody)
 
-		r := gin.New()
-		r.POST("/stop", nilCallbackStore.stop)
+		h := newAPIHandler(nilCallbackStore, nil)
 
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest("POST", "/stop", bytes.NewReader(testJSON))
 		req.Header.Set("Content-Type", "application/json")
-		r.ServeHTTP(w, req)
+		h.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
 	})

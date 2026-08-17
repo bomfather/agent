@@ -3,6 +3,7 @@ package secureshutdown
 import (
 	"context"
 	"crypto/rsa"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
@@ -11,7 +12,6 @@ import (
 	"time"
 
 	"github.com/bomfather/bomfather/agent/metrics"
-	"github.com/gin-gonic/gin"
 )
 
 const (
@@ -21,7 +21,7 @@ const (
 	serverIdleTimeout       = 60 * time.Second
 )
 
-// StartAPIServer creates and starts a new Gin API server on the specified port
+// StartAPIServer creates and starts the secure shutdown HTTP server on the specified port
 func StartAPIServer(ctx context.Context, port string, logger *slog.Logger, triggerShutdown func(), publicKey *rsa.PublicKey, agentMetrics *metrics.Metrics) error {
 	if logger == nil {
 		logger = slog.Default()
@@ -29,16 +29,6 @@ func StartAPIServer(ctx context.Context, port string, logger *slog.Logger, trigg
 
 	s := NewChallengeStore(logger, triggerShutdown, publicKey)
 	defer s.StopCleanup()
-
-	gin.SetMode(gin.ReleaseMode)
-	r := gin.New()
-	r.Use(gin.Recovery())
-	if agentMetrics != nil {
-		r.Use(httpMetricsMiddleware(agentMetrics))
-	}
-
-	r.POST("/request", s.request)
-	r.POST("/stop", s.stop)
 
 	addr := ":" + port
 	logger.Info("Starting secure shutdown server", "port", port)
@@ -50,7 +40,7 @@ func StartAPIServer(ctx context.Context, port string, logger *slog.Logger, trigg
 
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           r,
+		Handler:           newAPIHandler(s, agentMetrics),
 		ReadHeaderTimeout: serverReadHeaderTimeout,
 		ReadTimeout:       serverReadTimeout,
 		WriteTimeout:      serverWriteTimeout,
@@ -79,20 +69,62 @@ func StartAPIServer(ctx context.Context, port string, logger *slog.Logger, trigg
 	return nil
 }
 
-func httpMetricsMiddleware(agentMetrics *metrics.Metrics) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.Next()
+func newAPIHandler(s *ChallengeStore, agentMetrics *metrics.Metrics) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /request", withMetrics(agentMetrics, "/request", s.request))
+	mux.HandleFunc("POST /stop", withMetrics(agentMetrics, "/stop", s.stop))
+	return recoverHandler(mux)
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func (r *statusRecorder) Write(b []byte) (int, error) {
+	if r.status == 0 {
+		r.status = http.StatusOK
+	}
+	return r.ResponseWriter.Write(b)
+}
+
+func (r *statusRecorder) Unwrap() http.ResponseWriter {
+	return r.ResponseWriter
+}
+
+func withMetrics(agentMetrics *metrics.Metrics, handler string, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next(rec, r)
 		if agentMetrics == nil || agentMetrics.SecureShutdownHTTPRequests == nil {
 			return
 		}
-		handler := c.FullPath()
-		if handler == "" {
-			handler = "unknown"
-		}
 		agentMetrics.SecureShutdownHTTPRequests.WithLabelValues(
-			strconv.Itoa(c.Writer.Status()),
-			c.Request.Method,
+			strconv.Itoa(rec.status),
+			r.Method,
 			handler,
 		).Inc()
 	}
+}
+
+func recoverHandler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
 }
