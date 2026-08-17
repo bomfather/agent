@@ -279,7 +279,22 @@ func runAgent(c *cli.Context) error {
 		ViolationStream: make(chan *proto.ViolationEventWrapper),
 	}
 
-	client.ConsumeEvents(ctx, logger, streams, c.Int("grpc-buffer-size"), c.Int("grpc-batch-size"), c.Duration("grpc-batch-interval"))
+	grpcBufferSize := c.Int("grpc-buffer-size")
+	grpcBatchSize := c.Int("grpc-batch-size")
+	grpcBatchInterval := c.Duration("grpc-batch-interval")
+	if apiKey != "" {
+		if grpcBufferSize <= 0 {
+			return fmt.Errorf("invalid --grpc-buffer-size: must be > 0, got %d", grpcBufferSize)
+		}
+		if grpcBatchSize <= 0 {
+			return fmt.Errorf("invalid --grpc-batch-size: must be > 0, got %d", grpcBatchSize)
+		}
+		if grpcBatchInterval <= 0 {
+			return fmt.Errorf("invalid --grpc-batch-interval: must be > 0, got %s", grpcBatchInterval)
+		}
+	}
+
+	grpcFatalCh := client.ConsumeEvents(ctx, logger, streams, grpcBufferSize, grpcBatchSize, grpcBatchInterval)
 
 	nodeId, err := client.GetOrCreateNode(ctx, logger)
 	if err != nil {
@@ -311,8 +326,24 @@ func runAgent(c *cli.Context) error {
 
 	logger.Info("eBPF security policies launched successfully")
 
-	reader.ReadEvents(ctx, logger, *ebpfResources, nodeId, streams, cgroupToContainer)
+	readDone := make(chan struct{})
+	go func() {
+		reader.ReadEvents(ctx, logger, *ebpfResources, nodeId, streams, cgroupToContainer)
+		close(readDone)
+	}()
 
-	logger.Info("Agent shutdown", "status", "stopped")
-	return nil
+	select {
+	case <-ctx.Done():
+		<-readDone
+		logger.Info("Agent shutdown", "status", "stopped")
+		return nil
+	case err := <-grpcFatalCh:
+		logger.Error("Agent shutdown", "trigger", "grpc_auth_failure", "status", "stopping", "error", err)
+		cancel() // this will cancel the readevents goroutine
+		<-readDone
+		return err
+	case <-readDone:
+		logger.Info("Agent shutdown", "status", "stopped")
+		return nil
+	}
 }

@@ -17,12 +17,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/klauspost/compress/zstd"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/encoding"
 	grpc_health_v1 "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 
 	"github.com/bomfather/bomfather/agent/metrics"
 	"github.com/bomfather/bomfather/agent/proto"
@@ -49,9 +51,13 @@ var (
 // errOpenStream marks a failed StreamEvents open so ConsumeEvents can ramp
 // backoff on consecutive open failures and reset after a session that opened.
 var errOpenStream = errors.New("open stream")
+var errAuthFailure = errors.New("auth failure")
 
 type Client interface {
-	ConsumeEvents(ctx context.Context, logger *slog.Logger, streams reader.EventStreams, bufferSize int, batchSize int, batchInterval time.Duration)
+	// ConsumeEvents starts the stream loop in the background. The returned
+	// channel receives at most one fatal auth error; nil means never-fatal
+	// (e.g. local/dummy mode). Callers should exit the process on receive.
+	ConsumeEvents(ctx context.Context, logger *slog.Logger, streams reader.EventStreams, bufferSize int, batchSize int, batchInterval time.Duration) <-chan error
 	GetOrCreateNode(ctx context.Context, logger *slog.Logger) (uint64, error)
 	StartHealthcheck(ctx context.Context, logger *slog.Logger)
 }
@@ -587,10 +593,11 @@ func acceptDuringBackoff(ctx context.Context, cfg sessionConfig, b *batcher, d t
 	}
 }
 
-func (c *DefaultClient) ConsumeEvents(ctx context.Context, logger *slog.Logger, streams reader.EventStreams, bufferSize int, batchSize int, batchInterval time.Duration) {
+func (c *DefaultClient) ConsumeEvents(ctx context.Context, logger *slog.Logger, streams reader.EventStreams, bufferSize int, batchSize int, batchInterval time.Duration) <-chan error {
+	fatalCh := make(chan error, 1)
 	if bufferSize <= 0 || batchSize <= 0 || batchInterval <= 0 {
 		logger.Error("invalid event consumer configuration", "buffer_size", bufferSize, "batch_size", batchSize, "batch_interval", batchInterval)
-		return
+		return fatalCh
 	}
 
 	go func() {
@@ -610,6 +617,14 @@ func (c *DefaultClient) ConsumeEvents(ctx context.Context, logger *slog.Logger, 
 			if ctx.Err() != nil {
 				return
 			}
+			if isAuthFailure(err) {
+				c.setStreamConnected(false)
+				c.setState(metrics.StateDegraded)
+				c.reportQueueMetrics(b, pending)
+				logger.Error("stream auth failure; stopping reconnects", "error", err)
+				fatalCh <- fmt.Errorf("%w: %w", errAuthFailure, err)
+				return
+			}
 			opened := !errors.Is(err, errOpenStream)
 			if opened {
 				attempt = 0 // session ran; next backoff starts from the base delay
@@ -626,6 +641,19 @@ func (c *DefaultClient) ConsumeEvents(ctx context.Context, logger *slog.Logger, 
 			}
 		}
 	}()
+	return fatalCh
+}
+
+// isAuthFailure reports whether err is an auth rejection that should stop reconnects.
+func isAuthFailure(err error) bool {
+	if errors.Is(err, errAuthFailure) {
+		return true
+	}
+	st, ok := status.FromError(err)
+	if !ok {
+		return false
+	}
+	return st.Code() == codes.Unauthenticated || st.Code() == codes.PermissionDenied
 }
 
 func (c *DefaultClient) GetOrCreateNode(ctx context.Context, logger *slog.Logger) (uint64, error) {
@@ -647,7 +675,7 @@ func (c *DefaultClient) GetOrCreateNode(ctx context.Context, logger *slog.Logger
 	return response.NodeId, nil
 }
 
-func (c *DummyClient) ConsumeEvents(ctx context.Context, logger *slog.Logger, streams reader.EventStreams, bufferSize int, batchSize int, batchInterval time.Duration) {
+func (c *DummyClient) ConsumeEvents(ctx context.Context, logger *slog.Logger, streams reader.EventStreams, bufferSize int, batchSize int, batchInterval time.Duration) <-chan error {
 	go func() {
 		for {
 			select {
@@ -660,6 +688,7 @@ func (c *DummyClient) ConsumeEvents(ctx context.Context, logger *slog.Logger, st
 			}
 		}
 	}()
+	return nil
 }
 func (c *DummyClient) GetOrCreateNode(ctx context.Context, logger *slog.Logger) (uint64, error) {
 	return 0, nil
