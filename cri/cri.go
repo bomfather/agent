@@ -15,11 +15,11 @@ import (
 	"github.com/cilium/ebpf"
 	"github.com/containerd/cgroups/v3"
 	tasksvc "github.com/containerd/containerd/api/services/tasks/v1"
-	"github.com/containerd/containerd/namespaces"
 	"golang.org/x/sys/unix"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	runtimev1 "k8s.io/cri-api/pkg/apis/runtime/v1"
 
@@ -27,6 +27,8 @@ import (
 )
 
 var ErrCgroupV2Required = errors.New("cgroup v2 required")
+
+const containerdNamespaceHeader = "containerd-namespace"
 
 type ContainerMaps struct {
 	mu               sync.RWMutex
@@ -308,8 +310,13 @@ func EnsureCgroupV2() error {
 	}
 }
 
+// this is used so that we can avoid the vuln in on v1 of containerd
+func withContainerdNamespace(ctx context.Context, namespace string) context.Context {
+	return metadata.AppendToOutgoingContext(ctx, containerdNamespaceHeader, namespace)
+}
+
 func mapContainerCgroupIDToPath(ctx context.Context, taskClient tasksvc.TasksClient, containerID string, containerMaps *ContainerMaps) error {
-	ctx = namespaces.WithNamespace(ctx, "k8s.io")
+	ctx = withContainerdNamespace(ctx, "k8s.io")
 
 	taskResp, err := taskClient.Get(ctx, &tasksvc.GetRequest{ContainerID: containerID})
 	if err != nil {

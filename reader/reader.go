@@ -219,8 +219,7 @@ func ReadEvents(ctx context.Context, logger *slog.Logger, source ebpf.EBPFResour
 						select {
 						case <-ctx.Done():
 							return
-						default:
-							streams.OpenatStream <- &evt
+						case streams.OpenatStream <- &evt:
 						}
 					case source.ExecveSource:
 						evt, err := ReadExecveEvent(ctx, logger, record, nodeId, cgroupToContainerPathMap)
@@ -231,8 +230,7 @@ func ReadEvents(ctx context.Context, logger *slog.Logger, source ebpf.EBPFResour
 						select {
 						case <-ctx.Done():
 							return
-						default:
-							streams.ExecveStream <- &evt
+						case streams.ExecveStream <- &evt:
 						}
 					case source.ViolationSource:
 						evt, err := ReadViolationEvent(ctx, logger, record, nodeId, cgroupToContainerPathMap)
@@ -243,8 +241,7 @@ func ReadEvents(ctx context.Context, logger *slog.Logger, source ebpf.EBPFResour
 						select {
 						case <-ctx.Done():
 							return
-						default:
-							streams.ViolationStream <- &evt
+						case streams.ViolationStream <- &evt:
 						}
 					default:
 						logger.Error("Unknown event source", "source", s)

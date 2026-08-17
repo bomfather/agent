@@ -3,6 +3,7 @@
 package cri
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/containerd/cgroups/v3"
+	"google.golang.org/grpc/metadata"
 )
 
 func TestContainerMaps_StoresContainerStateInTwoMaps(t *testing.T) {
@@ -128,5 +130,17 @@ func TestCgroupPathFromPID_nonexistentProcess(t *testing.T) {
 	_, err := cgroupPathFromPID(fakePID)
 	if err == nil {
 		t.Fatalf("cgroupPathFromPID(%d) succeeded, want error", fakePID)
+	}
+}
+
+func TestWithContainerdNamespace_setsOutgoingMetadata(t *testing.T) {
+	ctx := withContainerdNamespace(context.Background(), "k8s.io")
+	md, ok := metadata.FromOutgoingContext(ctx)
+	if !ok {
+		t.Fatal("outgoing metadata missing")
+	}
+	got := md.Get(containerdNamespaceHeader)
+	if len(got) != 1 || got[0] != "k8s.io" {
+		t.Fatalf("containerd-namespace = %v, want [k8s.io]", got)
 	}
 }
