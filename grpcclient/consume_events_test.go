@@ -212,8 +212,7 @@ func testLogger() *slog.Logger {
 func TestConsumeEventsSendsOpenatBatch(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	stream := newFakeBidiStream(ctx)
 	client := &DefaultClient{grpcClient: &fakeEventIngestionClient{stream: stream}}
@@ -249,8 +248,7 @@ func TestConsumeEventsSendsOpenatBatch(t *testing.T) {
 func TestConsumeEventsRetriesPendingBatchBeforeNewDrain(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	stream := newFakeBidiStream(ctx, errors.New("send failed"))
 	client := &DefaultClient{grpcClient: &fakeEventIngestionClient{stream: stream}}
@@ -279,8 +277,7 @@ func TestConsumeEventsRetriesPendingBatchBeforeNewDrain(t *testing.T) {
 func TestConsumeEvents_pendingSurvivesReconnectAfterSendEOF(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	eofStream := newEOFSendStream(ctx)
 	successStream := newFakeBidiStream(ctx)
@@ -328,8 +325,7 @@ func TestConsumeEvents_pendingSurvivesReconnectAfterSendEOF(t *testing.T) {
 func TestConsumeEvents_recoversAfterStreamOpenFailure(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	successStream := newFakeBidiStream(ctx)
 	grpcClient := &scriptedStreamClient{
@@ -359,8 +355,7 @@ func TestConsumeEvents_recoversAfterStreamOpenFailure(t *testing.T) {
 func TestConsumeEventsUpdatesStreamAndQueueMetrics(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	_, agentMetrics := metrics.NewRegistry()
 	stream := newFakeBidiStream(ctx)
@@ -384,8 +379,7 @@ func TestConsumeEventsUpdatesStreamAndQueueMetrics(t *testing.T) {
 func TestConsumeEventsQueueMetricsIncludePendingBatch(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	_, agentMetrics := metrics.NewRegistry()
 	stream := newFakeBidiStream(ctx, errors.New("send failed"), errors.New("send failed"))

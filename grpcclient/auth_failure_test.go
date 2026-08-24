@@ -1,7 +1,6 @@
 package grpcclient
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -74,8 +73,7 @@ func TestIsAuthFailure(t *testing.T) {
 func TestConsumeEvents_authFailureStopsReconnect(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	grpcClient := &scriptedStreamClient{
 		openFailures: 5,

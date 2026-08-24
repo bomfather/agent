@@ -280,7 +280,7 @@ func collectBatchesTo(ch chan<- *proto.EventBatch) streamHandler {
 
 func recvNBatchesThenDisconnect(ch chan<- *proto.EventBatch, n int) streamHandler {
 	return func(_ int, stream grpc.BidiStreamingServer[proto.EventBatch, proto.BatchAck]) error {
-		for i := 0; i < n; i++ {
+		for range n {
 			batch, err := stream.Recv()
 			if err != nil {
 				return err

@@ -96,7 +96,7 @@ const (
 	FsVerityPinlistMapName               = "bomfather_fsverity_pinlist"
 )
 
-type Program interface{}
+type Program any
 
 type TracepointProgram struct {
 	TracepointCategory string
@@ -258,7 +258,7 @@ func checkPrerequisites() error {
 	}
 	lsmList := strings.TrimSpace(string(b))
 	bpfEnabled := false
-	for _, v := range strings.Split(lsmList, ",") {
+	for v := range strings.SplitSeq(lsmList, ",") {
 		if strings.TrimSpace(v) == LSM_BPF_MODULE {
 			bpfEnabled = true
 			break
@@ -288,14 +288,14 @@ func checkPrerequisites() error {
 // It returns true if the LSM argument is present and false if it is not
 // It returns true if the BPF module is present and false if it is not
 func parseLSMKernelArg(cmdline string) (hasLSMArg bool, hasBPFModule bool) {
-	fields := strings.Fields(strings.TrimSpace(cmdline))
-	for _, field := range fields {
+	fields := strings.FieldsSeq(strings.TrimSpace(cmdline))
+	for field := range fields {
 		if !strings.HasPrefix(field, "lsm=") {
 			continue
 		}
 		hasLSMArg = true
 		value := strings.TrimPrefix(field, "lsm=")
-		for _, module := range strings.Split(value, ",") {
+		for module := range strings.SplitSeq(value, ",") {
 			if strings.TrimSpace(module) == LSM_BPF_MODULE {
 				return true, true
 			}
@@ -460,7 +460,7 @@ func createEventSources(coll *ebpf.Collection, programLinks []link.Link) (*ringb
 	return openatReader, execveReader, violationReader, nil
 }
 
-func UpdateMap(coll *ebpf.Collection, mapName string, key interface{}, value interface{}) error {
+func UpdateMap(coll *ebpf.Collection, mapName string, key any, value any) error {
 	m, ok := coll.Maps[mapName]
 	if !ok {
 		return fmt.Errorf("map %q not found", mapName)
@@ -473,7 +473,7 @@ func UpdateMap(coll *ebpf.Collection, mapName string, key interface{}, value int
 	return nil
 }
 
-func DeleteKeyFromMap(coll *ebpf.Collection, mapName string, key interface{}) error {
+func DeleteKeyFromMap(coll *ebpf.Collection, mapName string, key any) error {
 	m, ok := coll.Maps[mapName]
 	if !ok {
 		return fmt.Errorf("map %q not found", mapName)
