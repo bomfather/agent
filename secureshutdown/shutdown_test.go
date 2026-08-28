@@ -195,7 +195,7 @@ func TestHTTPRequestHandler(t *testing.T) {
 	h.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]interface{}
+	var resp map[string]any
 	json.NewDecoder(w.Body).Decode(&resp)
 	assert.Contains(t, resp, "nonce")
 	nonce := resp["nonce"].(string)
@@ -237,7 +237,7 @@ func TestHTTPStopHandler(t *testing.T) {
 		h.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		var resp map[string]interface{}
+		var resp map[string]any
 		json.NewDecoder(w.Body).Decode(&resp)
 		assert.Contains(t, resp, "message")
 		assert.Equal(t, "shutdown initiated", resp["message"])
@@ -263,7 +263,7 @@ func TestHTTPStopHandler(t *testing.T) {
 		h.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
-		var resp map[string]interface{}
+		var resp map[string]any
 		json.NewDecoder(w.Body).Decode(&resp)
 		assert.Contains(t, resp, "error")
 		assert.Equal(t, "invalid request format", resp["error"])
@@ -279,7 +279,7 @@ func TestHTTPStopHandler(t *testing.T) {
 		h.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
-		var resp map[string]interface{}
+		var resp map[string]any
 		json.NewDecoder(w.Body).Decode(&resp)
 		assert.Contains(t, resp, "error")
 		assert.Equal(t, "invalid or expired nonce", resp["error"])
@@ -300,7 +300,7 @@ func TestHTTPStopHandler(t *testing.T) {
 		h.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
-		var resp map[string]interface{}
+		var resp map[string]any
 		json.NewDecoder(w.Body).Decode(&resp)
 		assert.Contains(t, resp, "error")
 		assert.Equal(t, "nonce already used", resp["error"])
@@ -323,7 +323,7 @@ func TestHTTPStopHandler(t *testing.T) {
 		h.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
-		var resp map[string]interface{}
+		var resp map[string]any
 		json.NewDecoder(w.Body).Decode(&resp)
 		assert.Contains(t, resp, "error")
 		assert.Equal(t, "nonce expired", resp["error"])
@@ -345,7 +345,7 @@ func TestHTTPStopHandler(t *testing.T) {
 		h.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusUnauthorized, w.Code)
-		var resp map[string]interface{}
+		var resp map[string]any
 		json.NewDecoder(w.Body).Decode(&resp)
 		assert.Contains(t, resp, "error")
 		assert.Contains(t, resp["error"], "signature verification failed")

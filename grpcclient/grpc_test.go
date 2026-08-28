@@ -72,7 +72,7 @@ func TestJitteredBackoff(t *testing.T) {
 
 	const samples = 64
 	seen := make(map[time.Duration]struct{}, samples)
-	for i := 0; i < samples; i++ {
+	for i := range samples {
 		backoff := jitteredBackoff(0)
 		max := reconnectBaseDelay * 2
 		if backoff < reconnectBaseDelay || backoff > max {
@@ -243,8 +243,7 @@ func TestAcceptDuringBackoff_timerNotStarved(t *testing.T) {
 	cfg := sessionConfig{streams: streams}
 	flood := &proto.OpenatEventWrapper{Event: &proto.OpenatEvent{Filename: "/tmp/flood"}}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go floodOpenat(ctx, streams.OpenatStream, flood)
 
 	start := time.Now()

@@ -1,0 +1,175 @@
+package integration
+
+import (
+	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"syscall"
+	"testing"
+	"time"
+)
+
+const (
+	agentReadyLogLine = "eBPF security policies launched successfully"
+	timeout           = 10 * time.Second
+	agentBinaryName   = "agent"
+)
+
+type RunningAgent struct {
+	Cmd        *exec.Cmd
+	TempDir    string
+	ConfigPath string
+	Stdout     *bytes.Buffer
+	Stderr     *bytes.Buffer
+}
+
+var (
+	bootstrapHelperOnce sync.Once
+	bootstrapHelperPath string
+)
+
+// waitForAgentReady waits for the agent to be ready by checking its stdout for a specific log line.
+func waitForAgentReady(t *testing.T, cmd *exec.Cmd, stdout, stderr *bytes.Buffer) {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if bytes.Contains(stdout.Bytes(), []byte(agentReadyLogLine)) {
+			return
+		}
+		if err := syscall.Kill(cmd.Process.Pid, syscall.Signal(0)); err != nil {
+			t.Fatalf("Agent process exited unexpectedly: %v\nStdout: %s\nStderr: %s", err, stdout.String(), stderr.String())
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("Timeout waiting for agent to be ready. Stdout: %s\nStderr: %s", stdout.String(), stderr.String())
+}
+func runAgent(t *testing.T, config string) *RunningAgent {
+	t.Helper()
+	return runAgentWithDir(t, t.TempDir(), config)
+}
+
+// runAgent starts the agent with the given configuration and returns a RunningAgent struct.
+// This also setups the cleanup function.
+func runAgentWithDir(t *testing.T, tempDir, config string) *RunningAgent {
+	t.Helper()
+
+	workingDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get current working directory: %v", err)
+	}
+
+	agnetDir := filepath.Dir(workingDir)
+	agentBinaryPath := filepath.Join(agnetDir, agentBinaryName)
+
+	if info, err := os.Stat(agentBinaryPath); err != nil || info.IsDir() {
+		t.Fatalf("Agent binary not found at %s: %v", agentBinaryPath, err)
+	}
+	configPath := filepath.Join(tempDir, "config.yaml")
+	configContents := strings.ReplaceAll(config, "{{TEMP_DIR}}", tempDir)
+	if err := os.WriteFile(configPath, []byte(configContents), 0o600); err != nil {
+		t.Fatalf("Failed to write config file: %v", err)
+	}
+
+	stdOut := &bytes.Buffer{}
+	stdErr := &bytes.Buffer{}
+	cmd := exec.Command(agentBinaryPath, "run", "--config", configPath)
+	cmd.Dir = tempDir
+	cmd.Stdout = stdOut
+	cmd.Stderr = stdErr
+
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("Failed to start agent: %v", err)
+	}
+	t.Cleanup(func() {
+		if cmd.Process == nil {
+			return
+		}
+		_ = cmd.Process.Signal(os.Interrupt)
+
+		done := make(chan error, 1)
+		go func() {
+			done <- cmd.Wait()
+		}()
+
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Logf("Agent exited with error: %v\nstdout:%v\nstderr:%v", err, stdOut.String(), stdErr.String())
+			}
+		case <-time.After(5 * time.Second):
+			t.Logf("Agent did not exit in time, killing it. stdout:%v\nstderr:%v", stdOut.String(), stdErr.String())
+			_ = cmd.Process.Kill()
+			if err := <-done; err != nil {
+				t.Logf("Agent exited with error after kill: %v\nstdout:%s\nstderr:%s", err, stdOut.String(), stdErr.String())
+			}
+		}
+	})
+
+	time.Sleep(2 * time.Second)
+
+	if err := syscall.Kill(cmd.Process.Pid, syscall.Signal(0)); err != nil {
+		t.Fatalf("Agent process exited unexpectedly: %v\nStdout: %s\nStderr: %s", err, stdOut.String(), stdErr.String())
+	}
+
+	waitForAgentReady(t, cmd, stdOut, stdErr)
+
+	return &RunningAgent{
+		Cmd:        cmd,
+		TempDir:    tempDir,
+		ConfigPath: configPath,
+		Stdout:     stdOut,
+		Stderr:     stdErr,
+	}
+}
+
+// bootstrapHelperExe builds the bootstrap helper binary and returns its path.
+func bootstrapHelperExe(t *testing.T) string {
+	t.Helper()
+
+	bootstrapHelperOnce.Do(func() {
+		integrationDir, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("Failed to get current working directory: %v", err)
+		}
+
+		tmpDir, err := os.MkdirTemp("", "bomfather-bootstrap-helper-*")
+		if err != nil {
+			t.Fatalf("Failed to create temporary directory for bootstrap helper: %v", err)
+		}
+
+		bin := filepath.Join(tmpDir, "bootstrap_helper")
+		srcDir := filepath.Join(integrationDir, "testdata", "bootstrap_helper")
+		cmd := exec.Command("go", "build", "-o", bin, ".")
+		cmd.Dir = srcDir
+		buildLog, err := cmd.CombinedOutput()
+		if err != nil {
+			_, _ = os.Stderr.Write(buildLog)
+			t.Fatalf("Failed to build bootstrap helper: %v", err)
+			return
+		}
+
+		bootstrapHelperPath = bin
+	})
+
+	return bootstrapHelperPath
+}
+
+func mustResolveExecutable(t *testing.T, name string) string {
+	t.Helper()
+
+	path, err := exec.LookPath(name)
+	if err != nil {
+		t.Fatalf("find %s executable: %v", name, err)
+	}
+
+	resolvedPath, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		return resolvedPath
+	}
+
+	return path
+}

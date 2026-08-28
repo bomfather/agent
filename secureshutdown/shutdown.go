@@ -83,7 +83,7 @@ func (s *ChallengeStore) cleanupExpired() {
 	var keysToDelete []string
 
 	// First pass: collect keys to delete
-	s.challenges.Range(func(key, value interface{}) bool {
+	s.challenges.Range(func(key, value any) bool {
 		challenge := value.(*ShutdownChallenge)
 		if challenge.CreatedAt.Before(expirationTime) || atomic.LoadUint32(&challenge.used) == 1 {
 			keysToDelete = append(keysToDelete, key.(string))

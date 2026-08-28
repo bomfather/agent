@@ -280,7 +280,7 @@ func pythonPolicyParser(policy string) (PythonPolicy, error) {
 		return PythonPolicy{}, fmt.Errorf("libs is required")
 	}
 	libPaths := []string{}
-	for _, lib := range strings.Split(libs, ",") {
+	for lib := range strings.SplitSeq(libs, ",") {
 		lib = strings.TrimSpace(lib)
 		if lib == "" {
 			return PythonPolicy{}, fmt.Errorf("libs contains an empty path")
