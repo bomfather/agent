@@ -1426,8 +1426,7 @@ static __always_inline int is_proc_pid_stat_inode(struct inode *inode, u32 *out_
     if (read_len != 5) {
         return 0;
     }
-
-    if (__builtin_memcmp(name, "stat", 5)) {
+    if (bpf_strncmp(name, sizeof(name), "stat") != 0) {
         return 0;
     }
 
