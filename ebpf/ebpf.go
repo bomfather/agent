@@ -251,20 +251,14 @@ func checkPrerequisites() error {
 		return fmt.Errorf("%w: %v", ErrLoopUnsupported, err)
 	}
 
-	// checks if the LSM is enabled
-	b, err := os.ReadFile(LSM_LIST_PATH)
+	// checks if the LSM is enabled. A missing lsm file usually means
+	// securityfs is not mounted in this mount namespace (common in
+	// containers), not that the kernel omitted bpf from the LSM list.
+	lsmList, err := readLSMList()
 	if err != nil {
-		return fmt.Errorf("%w: read %s: %w", ErrLSMNotEnabled, LSM_LIST_PATH, err)
+		return err
 	}
-	lsmList := strings.TrimSpace(string(b))
-	bpfEnabled := false
-	for v := range strings.SplitSeq(lsmList, ",") {
-		if strings.TrimSpace(v) == LSM_BPF_MODULE {
-			bpfEnabled = true
-			break
-		}
-	}
-	if !bpfEnabled {
+	if !lsmListHasBPF(lsmList) {
 		return fmt.Errorf("%w: bpf lsm not enabled; %s=%q", ErrLSMNotEnabled, LSM_LIST_PATH, lsmList)
 	}
 
@@ -282,6 +276,15 @@ func checkPrerequisites() error {
 		return nil
 	}
 	return fmt.Errorf("%w", ErrRebootRequiredForBPFLSM)
+}
+
+func lsmListHasBPF(lsmList string) bool {
+	for v := range strings.SplitSeq(lsmList, ",") {
+		if strings.TrimSpace(v) == LSM_BPF_MODULE {
+			return true
+		}
+	}
+	return false
 }
 
 // parseLSMKernelArg parses the LSM kernel argument from the command line

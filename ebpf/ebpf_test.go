@@ -19,6 +19,29 @@ func TestCheckPrerequisites(t *testing.T) {
 	}
 }
 
+func TestLSMListHasBPF(t *testing.T) {
+	tests := []struct {
+		name    string
+		lsmList string
+		want    bool
+	}{
+		{name: "bpf present", lsmList: "lockdown,capability,yama,bpf,landlock", want: true},
+		{name: "bpf only", lsmList: "bpf", want: true},
+		{name: "bpf with whitespace", lsmList: " lockdown , bpf , yama ", want: true},
+		{name: "bpf absent", lsmList: "lockdown,capability,yama", want: false},
+		{name: "empty", lsmList: "", want: false},
+		{name: "substring is not a token", lsmList: "bpfish,yama", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := lsmListHasBPF(tt.lsmList)
+			if got != tt.want {
+				t.Fatalf("lsmListHasBPF(%q) = %v, want %v", tt.lsmList, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestParseLSMKernelArg(t *testing.T) {
 	tests := []struct {
 		name       string
