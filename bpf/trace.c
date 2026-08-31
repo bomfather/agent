@@ -1133,6 +1133,18 @@ static __always_inline struct path_key *make_path_key_from_current_mnt_ns(const 
     return out;
 }
 
+static __always_inline int digest_eq(const __u8 *a, const __u8 *b)
+{
+    const __u64 *x = (const __u64 *)a;
+    const __u64 *y = (const __u64 *)b;
+    #pragma unroll
+    for (int i = 0; i < FSVERITY_MAX_DIGEST_SIZE / 8; i++) {
+        if (x[i] != y[i])
+            return 0;
+    }
+    return 1;
+}
+
 static __noinline int fsverity_check_path(const char *filename, struct file *file)
 {
     // Step 1: look up the path in the pinlist.
@@ -1143,9 +1155,6 @@ static __noinline int fsverity_check_path(const char *filename, struct file *fil
     struct fsverity_allowlist_key *expected_ptr = bpf_map_lookup_elem(&bomfather_fsverity_pinlist, pkey);
     if (!expected_ptr)
         return 0; // Path is not in the map return it.
-
-    //copying the expected digest to the stack to avoid the map value being overwritten by other calls.
-    struct fsverity_allowlist_key expected = *expected_ptr;
 
     u32 zero = 0;
     struct fsverity_digest_bpf *digest = bpf_map_lookup_elem(&bomfather_fsverity_scratch, &zero);
@@ -1163,14 +1172,9 @@ static __noinline int fsverity_check_path(const char *filename, struct file *fil
     if (bpf_get_fsverity_digest(file, &ptr) != 0 || digest->digest_size == 0)
         return -1; // fsverity not present deny.
 
-    // copying to stack to avoid the map value being overwritten by other calls.
-    struct fsverity_allowlist_key live = {};
-    live.alg = digest->digest_algorithm;
-    __builtin_memcpy(live.digest, digest->digest, FSVERITY_MAX_DIGEST_SIZE);
-
-    if (live.alg != expected.alg)
+    if (digest->digest_algorithm != expected_ptr->alg)
         return -1;
-    if (__builtin_memcmp(live.digest, expected.digest, FSVERITY_MAX_DIGEST_SIZE) != 0)
+    if (!digest_eq(digest->digest, expected_ptr->digest))
         return -1;
 
     return 0;
