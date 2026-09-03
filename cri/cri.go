@@ -139,7 +139,7 @@ func UpdateEBPFContainerContext(ctx context.Context, logger *slog.Logger, contai
 	taskClient := tasksvc.NewTasksClient(conn)
 	stream, err := runtimeClient.GetContainerEvents(ctx, &runtimev1.GetEventsRequest{})
 	if err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil
 	}
 
@@ -180,7 +180,7 @@ func UpdateEBPFContainerContext(ctx context.Context, logger *slog.Logger, contai
 	}()
 
 	go func() {
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 
 		for {
 			event, err := stream.Recv()
