@@ -19,8 +19,14 @@ CI_PACKAGES := ./grpcclient ./secureshutdown ./cri
 # Pinned versions of the protoc Go plugins used by the `proto` target.
 PROTOC_GEN_GO_VERSION := v1.36.5
 PROTOC_GEN_GO_GRPC_VERSION := v1.5.1
+GOLANGCI_LINT_VERSION := v2.12.2
+GOBIN := $(shell $(GO) env GOBIN)
+ifeq ($(GOBIN),)
+GOBIN := $(shell $(GO) env GOPATH)/bin
+endif
+GOLANGCI_LINT := $(GOBIN)/golangci-lint
 
-.PHONY: all build $(BIN) bpf proto tools init test coverage coverage-ci coverage-full ci test-integration tidy vendor fmt clean \
+.PHONY: all build $(BIN) bpf proto tools lint-tools lint init test coverage coverage-ci coverage-full ci test-integration tidy vendor fmt clean \
 	build-agent build-bpf build-proto docker
 
 all: build
@@ -55,6 +61,18 @@ tools:
 		$(GO) install google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_GO_VERSION)
 	@command -v protoc-gen-go-grpc >/dev/null 2>&1 || \
 		$(GO) install google.golang.org/grpc/cmd/protoc-gen-go-grpc@$(PROTOC_GEN_GO_GRPC_VERSION)
+
+# Install golangci-lint at the pinned version if the binary is missing or stale.
+# `go install` writes to $(GOBIN); invoke that path so lint does not depend on PATH.
+lint-tools:
+	@installed=$$($(GOLANGCI_LINT) version --short 2>/dev/null || true); \
+	want=$(GOLANGCI_LINT_VERSION:v%=%); \
+	if [ "$$installed" != "$$want" ]; then \
+		$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION); \
+	fi
+
+lint: bpf proto lint-tools
+	$(GOLANGCI_LINT) run ./...
 
 init:
 	git submodule update --init --recursive

@@ -1,0 +1,23 @@
+version: "2"
+
+run:
+  timeout: 5m
+  modules-download-mode: vendor
+  relative-path-mode: gomod
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - unused
+  exclusions:
+    generated: lax
+    paths:
+      - vendor
+      - bpf/libbpf
+      - proto/.*\.pb\.go$
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

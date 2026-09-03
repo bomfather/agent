@@ -234,9 +234,9 @@ var programs = append([]Program(nil), basePrograms...)
 
 func (r *EBPFResources) Close() {
 	cleanupResources(r.Collection, r.Links)
-	r.OpenatSource.Close()
-	r.ExecveSource.Close()
-	r.ViolationSource.Close()
+	_ = r.OpenatSource.Close()
+	_ = r.ExecveSource.Close()
+	_ = r.ViolationSource.Close()
 }
 
 // checkPrerequisites checks if the system has the necessary prerequisites for eBPF programs
@@ -386,7 +386,7 @@ func loadEBPFCollection(bpfProgram []byte, kernel615Plus bool, disableBPFOps boo
 
 func cleanupResources(coll *ebpf.Collection, links []link.Link) {
 	for _, link := range links {
-		link.Close()
+		_ = link.Close()
 	}
 	coll.Close()
 }
@@ -446,15 +446,15 @@ func createEventSources(coll *ebpf.Collection, programLinks []link.Link) (*ringb
 
 	execveReader, err := perf.NewReader(coll.Maps[ExecveEventsMapName], perfBufferSize)
 	if err != nil {
-		openatReader.Close()
+		_ = openatReader.Close()
 		cleanupResources(coll, programLinks)
 		return nil, nil, nil, fmt.Errorf("failed to create perf reader: %w", err)
 	}
 
 	violationReader, err := ringbuf.NewReader(coll.Maps[ViolationEventsMapName])
 	if err != nil {
-		execveReader.Close()
-		openatReader.Close()
+		_ = execveReader.Close()
+		_ = openatReader.Close()
 		cleanupResources(coll, programLinks)
 		return nil, nil, nil, fmt.Errorf("failed to create ring buffer reader: %w", err)
 	}

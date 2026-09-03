@@ -232,7 +232,7 @@ func TestReplaceMapEntriesRemapsKeys(t *testing.T) {
 	if err != nil {
 		t.Skipf("skipping: failed to create eBPF test map: %v", err)
 	}
-	defer testMap.Close()
+	defer func() { _ = testMap.Close() }()
 
 	coll := &ebpf.Collection{
 		Maps: map[string]*ebpf.Map{

@@ -187,7 +187,7 @@ func runAgent(c *cli.Context) error {
 		if err != nil {
 			return err
 		}
-		defer stopTracePipeForwarding()
+		defer func() { _ = stopTracePipeForwarding() }()
 		logOutput = logFile
 	}
 
@@ -207,7 +207,7 @@ func runAgent(c *cli.Context) error {
 		if err != nil {
 			return fmt.Errorf("failed to start metrics server: %w", err)
 		}
-		defer metricsServer.Server.Close()
+		defer func() { _ = metricsServer.Server.Close() }()
 
 		agentMetrics.StartTime.SetToCurrentTime()
 		go func() {

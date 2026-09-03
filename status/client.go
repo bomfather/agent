@@ -41,7 +41,7 @@ func (c *Client) Fetch(ctx context.Context) (map[string]*dto.MetricFamily, error
 	if err != nil {
 		return nil, fmt.Errorf("request metrics: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("request metrics: unexpected HTTP status %s", response.Status)
