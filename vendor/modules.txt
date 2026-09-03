@@ -4,8 +4,8 @@ github.com/beorn7/perks/quantile
 # github.com/cespare/xxhash/v2 v2.3.0
 ## explicit; go 1.11
 github.com/cespare/xxhash/v2
-# github.com/cilium/ebpf v0.21.0
-## explicit; go 1.24.0
+# github.com/cilium/ebpf v0.22.0
+## explicit; go 1.25.0
 github.com/cilium/ebpf
 github.com/cilium/ebpf/asm
 github.com/cilium/ebpf/btf
@@ -16,6 +16,7 @@ github.com/cilium/ebpf/internal/epoll
 github.com/cilium/ebpf/internal/kallsyms
 github.com/cilium/ebpf/internal/kconfig
 github.com/cilium/ebpf/internal/linux
+github.com/cilium/ebpf/internal/mountinfo
 github.com/cilium/ebpf/internal/platform
 github.com/cilium/ebpf/internal/sys
 github.com/cilium/ebpf/internal/sysenc
@@ -109,8 +110,8 @@ github.com/prometheus/procfs/internal/util
 # github.com/russross/blackfriday/v2 v2.1.0
 ## explicit
 github.com/russross/blackfriday/v2
-# github.com/sirupsen/logrus v1.9.3
-## explicit; go 1.13
+# github.com/sirupsen/logrus v1.9.4
+## explicit; go 1.17
 github.com/sirupsen/logrus
 # github.com/stretchr/testify v1.11.1
 ## explicit; go 1.17

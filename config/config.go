@@ -833,6 +833,9 @@ func parseConfigFromStruct(config Config, debugEnabled bool) ([]agentebpf.EBPFMa
 			fsverityPinlist.Entries[pathKeyWithoutSlash] = digestVal
 		}
 	}
+	if err := protectAgentExecutable(trustedExecutables, containerIDMapper); err != nil {
+		return nil, nil, nil, nil, err
+	}
 
 	allowedPtraceExecutables := agentebpf.EBPFMapWrite{MapName: agentebpf.AllowedPtraceExecutablesMapName, Entries: make(map[any]any)}
 	ldEnvAllowedExecutables := agentebpf.EBPFMapWrite{MapName: agentebpf.LDEnvAllowedExecutablesMapName, Entries: make(map[any]any)}
@@ -946,4 +949,33 @@ func RefreshDNSPolicy(ctx context.Context, logger *slog.Logger, coll *cebpf.Coll
 			}
 		}
 	}()
+}
+func getExecutablePath() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("failed to get executable path: %w", err)
+	}
+	return exe, nil
+}
+
+// protectAgentExecutable registers the running agent binary in the trusted
+// executables map so it cannot be tampered with (e.g. overwritten by a bind
+// mount or a write). This applies on every startup, independent of user policy,
+// so the agent protects itself even when no policy references its path. An
+// explicit policy for the agent path is preserved and takes precedence.
+// Also even if there is no policy file, it will still be protected.
+func protectAgentExecutable(trustedExecutables agentebpf.EBPFMapWrite, containerIDMapper *PolicyIDMapper) error {
+	agentPath, err := getExecutablePath()
+	if err != nil {
+		return fmt.Errorf("failed to get agent executable path: %w", err)
+	}
+	agentKeyWithSlash, agentKeyWithoutSlash, err := pathKeyFromString("filepath = "+agentPath, containerIDMapper)
+	if err != nil {
+		return fmt.Errorf("failed to get path key for agent executable %q: %w", agentPath, err)
+	}
+	if _, exists := trustedExecutables.Entries[agentKeyWithSlash]; !exists {
+		trustedExecutables.Entries[agentKeyWithSlash] = AccessControlValue{}
+		trustedExecutables.Entries[agentKeyWithoutSlash] = AccessControlValue{}
+	}
+	return nil
 }

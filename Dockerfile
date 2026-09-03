@@ -2,7 +2,7 @@
 
 # Build stage: compiles the eBPF object, generated protobuf code, and the
 # static Go binary.
-FROM golang:1.26.5-bookworm AS builder
+FROM golang:1.26.6-bookworm AS builder
 
 # Tools required to build the embedded eBPF object and generated protobuf code.
 # Bookworm ships clang/llvm 14 via the unversioned meta-packages, which provide

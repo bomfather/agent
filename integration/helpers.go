@@ -49,12 +49,12 @@ func waitForAgentReady(t *testing.T, cmd *exec.Cmd, stdout, stderr *bytes.Buffer
 }
 func runAgent(t *testing.T, config string) *RunningAgent {
 	t.Helper()
-	return runAgentWithDir(t, t.TempDir(), config)
+	return runAgentInDir(t, t.TempDir(), config)
 }
 
-// runAgent starts the agent with the given configuration and returns a RunningAgent struct.
-// This also setups the cleanup function.
-func runAgentWithDir(t *testing.T, tempDir, config string) *RunningAgent {
+// runAgentInDir starts the agent in tempDir with the given configuration YAML
+// and registers cleanup.
+func runAgentInDir(t *testing.T, tempDir, config string) *RunningAgent {
 	t.Helper()
 
 	workingDir, err := os.Getwd()

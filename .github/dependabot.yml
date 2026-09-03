@@ -1,45 +1,8 @@
 version: 2
 updates:
-  # Monitor the agent Go module (vendored: Dependabot auto-detects vendor/
-  # via vendor/modules.txt and runs go mod vendor — do not set vendor: true;
-  # that key is only valid for bundler in dependabot.yml schema)
-  - package-ecosystem: "gomod"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-      day: "friday"
-      time: "09:00"
-    open-pull-requests-limit: 5
-    commit-message:
-      prefix: "deps"
-      include: "scope"
-    labels:
-      - "dependencies"
-      - "go"
-    groups:
-      go-dependencies:
-        patterns:
-          - "*"
-
-  # Monitor the example accessor Go module
-  - package-ecosystem: "gomod"
-    directory: "/example/accessor"
-    schedule:
-      interval: "weekly"
-      day: "sunday"
-      time: "09:00"
-    open-pull-requests-limit: 2
-    commit-message:
-      prefix: "deps"
-      include: "scope"
-    labels:
-      - "dependencies"
-      - "go"
-      - "example"
-    groups:
-      go-dependencies:
-        patterns:
-          - "*"
+  # Go modules are not managed by Dependabot. Scheduled govulncheck 
+  # replace gomod security PRs.
+  # See https://words.filippo.io/dependabot/
 
   # Monitor git submodules (bpf/libbpf)
   - package-ecosystem: "gitsubmodule"
