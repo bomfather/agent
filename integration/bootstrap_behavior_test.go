@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bomfather/bomfather/agent/integration/testdata/bootstrap_helper/command"
+	"github.com/bomfather/bomfather/agent/integration/testdata/command"
 )
 
 const policyPrefix = `
@@ -48,7 +48,7 @@ policies:
 // agent attaches, then checks that the already-running parent and a child it
 // spawns can still read an allowed directory.
 func TestProcessStartedBeforeAgentAndChildCanRead(t *testing.T) {
-	h := bootstrapHelperExe(t)
+	h := buildTestBinary(t)
 
 	protectedDir := filepath.Join(t.TempDir(), "protected")
 	if err := os.MkdirAll(protectedDir, 0o755); err != nil {
@@ -88,7 +88,7 @@ func TestProcessStartedBeforeAgentAndChildCanRead(t *testing.T) {
 // checks that a later parent and the child it spawns can read an allowed
 // directory via the normal exec path.
 func TestProcessStartedAfterAgentAndChildCanRead(t *testing.T) {
-	h := bootstrapHelperExe(t)
+	h := buildTestBinary(t)
 
 	preAgentDir := t.TempDir()
 	protectedDir := filepath.Join(preAgentDir, "protected")
@@ -125,7 +125,7 @@ func TestProcessStartedAfterAgentAndChildCanRead(t *testing.T) {
 }
 
 func TestBootstrapEnforcesOwnPolicy(t *testing.T) {
-	h := bootstrapHelperExe(t)
+	h := buildTestBinary(t)
 
 	preAgentDir := t.TempDir()
 	allowedDir := filepath.Join(preAgentDir, "allowed")
@@ -174,7 +174,7 @@ func TestBootstrapEnforcesOwnPolicy(t *testing.T) {
 }
 
 func TestReadonlyFileWriteBlocked(t *testing.T) {
-	h := bootstrapHelperExe(t)
+	h := buildTestBinary(t)
 
 	preAgentDir := t.TempDir()
 	protectedDir := filepath.Join(preAgentDir, "protected")
@@ -233,7 +233,7 @@ func TestGlobalReadOnly(t *testing.T) {
 	if os.Getuid() != 0 {
 		t.Skip("test must be run as root")
 	}
-	h := bootstrapHelperExe(t)
+	h := buildTestBinary(t)
 	dir := t.TempDir()
 
 	readOnlyTxt := filepath.Join(dir, "read-only.txt")
@@ -265,7 +265,7 @@ func TestChildCannotReadDirParentWasNotGranted(t *testing.T) {
 	if os.Getuid() != 0 {
 		t.Skip("test must be run as root")
 	}
-	h := bootstrapHelperExe(t)
+	h := buildTestBinary(t)
 
 	preAgentDir := t.TempDir()
 	allowedDir := filepath.Join(preAgentDir, "allowed")
