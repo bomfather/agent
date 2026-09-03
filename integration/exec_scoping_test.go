@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/bomfather/bomfather/agent/integration/testdata/bootstrap_helper/command"
+	"github.com/bomfather/bomfather/agent/integration/testdata/command"
 )
 
 // bootstrapPolicyReadOnlyForExecutable returns a policy that builds a policy where there are two executables
@@ -63,10 +63,10 @@ policies:
 `, runner, runnerDir, runner, forbidden)
 }
 
-// buildBootstrapHelperAt builds a second copy of the helper at a new path, so a
+// buildTestBinaryAt builds a second copy of the test binary at a new path, so a
 // test has two distinct binaries to check that permissions are scoped per
 // executable.
-func buildBootstrapHelperAt(t *testing.T) string {
+func buildTestBinaryAt(t *testing.T) string {
 	t.Helper()
 
 	integrationDir, err := os.Getwd()
@@ -74,12 +74,12 @@ func buildBootstrapHelperAt(t *testing.T) string {
 		t.Fatalf("get working directory: %v", err)
 	}
 
-	bin := filepath.Join(t.TempDir(), "bootstrap_helper_second")
-	srcDir := filepath.Join(integrationDir, "testdata", "bootstrap_helper")
+	bin := filepath.Join(t.TempDir(), "test_binary_second")
+	srcDir := filepath.Join(integrationDir, "testdata", "test_binary")
 	cmd := exec.Command("go", "build", "-o", bin, ".")
 	cmd.Dir = srcDir
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("build second bootstrap helper: %v\n%s", err, out)
+		t.Fatalf("build second test binary: %v\n%s", err, out)
 	}
 	return bin
 }
@@ -103,8 +103,8 @@ func TestReadScopedToExecutable(t *testing.T) {
 	if os.Getuid() != 0 {
 		t.Skip("test must be run as root")
 	}
-	granted := bootstrapHelperExe(t)
-	denied := buildBootstrapHelperAt(t)
+	granted := buildTestBinary(t)
+	denied := buildTestBinaryAt(t)
 
 	base := t.TempDir()
 	sharedDir := filepath.Join(base, "shared")
@@ -161,8 +161,8 @@ func TestExecScopedByCanRun(t *testing.T) {
 	if os.Getuid() != 0 {
 		t.Skip("test must be run as root")
 	}
-	h := bootstrapHelperExe(t)
-	forbidden := buildBootstrapHelperAt(t) // a second binary h is not allowed to run
+	h := buildTestBinary(t)
+	forbidden := buildTestBinaryAt(t) // a second binary h is not allowed to run
 
 	dir := t.TempDir()
 	file := filepath.Join(dir, "f.txt")
@@ -193,8 +193,8 @@ func TestSelfRunnableExecutableRunnableByAnyone(t *testing.T) {
 	if os.Getuid() != 0 {
 		t.Skip("test must be run as root")
 	}
-	h := bootstrapHelperExe(t)
-	target := buildBootstrapHelperAt(t)
+	h := buildTestBinary(t)
+	target := buildTestBinaryAt(t)
 
 	dir := t.TempDir()
 	file := filepath.Join(dir, "f.txt")
@@ -231,8 +231,8 @@ func TestUnregisteredExecutableStillBlockedFromGuardedDir(t *testing.T) {
 	if os.Getuid() != 0 {
 		t.Skip("test must be run as root")
 	}
-	h := bootstrapHelperExe(t)
-	newtool := buildBootstrapHelperAt(t) // unregistered
+	h := buildTestBinary(t)
+	newtool := buildTestBinaryAt(t) // unregistered
 
 	dir := t.TempDir()
 	guarded := filepath.Join(dir, "guarded")
@@ -272,8 +272,8 @@ func TestUnregisteredExecutableIsAllowed(t *testing.T) {
 	if os.Getuid() != 0 {
 		t.Skip("test must be run as root")
 	}
-	h := bootstrapHelperExe(t)
-	newtool := buildBootstrapHelperAt(t) // present in NO policy
+	h := buildTestBinary(t)
+	newtool := buildTestBinaryAt(t) // present in NO policy
 
 	dir := t.TempDir()
 	file := filepath.Join(dir, "f.txt")
@@ -309,8 +309,8 @@ func TestCanRunGrantAllowsLaunch(t *testing.T) {
 	if os.Getuid() != 0 {
 		t.Skip("test must be run as root")
 	}
-	h := bootstrapHelperExe(t)
-	tool := buildBootstrapHelperAt(t)
+	h := buildTestBinary(t)
+	tool := buildTestBinaryAt(t)
 
 	dir := t.TempDir()
 	file := filepath.Join(dir, "f.txt")
@@ -336,8 +336,8 @@ func TestCanRunGrantIsNotSymmetric(t *testing.T) {
 	if os.Getuid() != 0 {
 		t.Skip("test must be run as root")
 	}
-	h := bootstrapHelperExe(t)
-	tool := buildBootstrapHelperAt(t)
+	h := buildTestBinary(t)
+	tool := buildTestBinaryAt(t)
 
 	dir := t.TempDir()
 	file := filepath.Join(dir, "f.txt")
@@ -380,9 +380,9 @@ func TestCanRunGrantIsNotTransitive(t *testing.T) {
 	if os.Getuid() != 0 {
 		t.Skip("test must be run as root")
 	}
-	h := bootstrapHelperExe(t)
-	mid := buildBootstrapHelperAt(t)
-	leaf := buildBootstrapHelperAt(t)
+	h := buildTestBinary(t)
+	mid := buildTestBinaryAt(t)
+	leaf := buildTestBinaryAt(t)
 
 	dir := t.TempDir()
 	file := filepath.Join(dir, "f.txt")
@@ -425,8 +425,8 @@ func TestUnregisteredExecutableCannotLaunchGuardedBinary(t *testing.T) {
 	if os.Getuid() != 0 {
 		t.Skip("test must be run as root")
 	}
-	newtool := buildBootstrapHelperAt(t)
-	forbidden := buildBootstrapHelperAt(t)
+	newtool := buildTestBinaryAt(t)
+	forbidden := buildTestBinaryAt(t)
 
 	dir := t.TempDir()
 	file := filepath.Join(dir, "f.txt")
@@ -459,8 +459,8 @@ func TestUnregisteredExecutableCanReadUnguardedDir(t *testing.T) {
 	if os.Getuid() != 0 {
 		t.Skip("test must be run as root")
 	}
-	h := bootstrapHelperExe(t)
-	newtool := buildBootstrapHelperAt(t)
+	h := buildTestBinary(t)
+	newtool := buildTestBinaryAt(t)
 
 	base := t.TempDir()
 	guarded := filepath.Join(base, "guarded")

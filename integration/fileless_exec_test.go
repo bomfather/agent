@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/bomfather/bomfather/agent/integration/testdata/bootstrap_helper/command"
+	"github.com/bomfather/bomfather/agent/integration/testdata/command"
 )
 
 // blockInMemoryPolicyPrefix enables the fileless execution control and grants
@@ -34,7 +34,7 @@ func TestFilelessExecBlocked(t *testing.T) {
 	if os.Getuid() != 0 {
 		t.Skip("test must be run as root")
 	}
-	h := bootstrapHelperExe(t)
+	h := buildTestBinary(t)
 
 	dir := t.TempDir()
 	file := filepath.Join(dir, "f.txt")
@@ -87,7 +87,7 @@ func TestDevShmExecBlocked(t *testing.T) {
 	if os.Getuid() != 0 {
 		t.Skip("test must be run as root")
 	}
-	h := bootstrapHelperExe(t)
+	h := buildTestBinary(t)
 
 	dir := t.TempDir()
 	file := filepath.Join(dir, "f.txt")

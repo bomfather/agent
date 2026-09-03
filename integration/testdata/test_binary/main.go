@@ -1,10 +1,11 @@
-// Bootstrap and fallback integration scenarios. Built once per test process; each
-// invocation is a normal ELF executable so agent policy keys match mm->exe_file.
+// Shared integration test binary. Built once per test process; each invocation
+// is a normal ELF executable so agent policy keys match mm->exe_file.
 package main
 
 import (
 	"bufio"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"strconv"
@@ -13,12 +14,12 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/bomfather/bomfather/agent/integration/testdata/bootstrap_helper/command"
+	"github.com/bomfather/bomfather/agent/integration/testdata/command"
 )
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "bootstrap_helper: missing subcommand")
+		fmt.Fprintln(os.Stderr, "test_binary: missing subcommand")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -32,6 +33,8 @@ func main() {
 		readAndBlocked()
 	case command.WriteToReadonly:
 		writeToReadonly()
+	case command.Connect:
+		connect()
 	case command.ReadMustBeDenied:
 		readMustBeDenied()
 	case command.ParentReadAllowedChildReadDenied:
@@ -41,7 +44,7 @@ func main() {
 	case command.FilelessRan:
 		filelessRan()
 	default:
-		fmt.Fprintf(os.Stderr, "bootstrap_helper: unknown subcommand %q\n", os.Args[1])
+		fmt.Fprintf(os.Stderr, "test_binary: unknown subcommand %q\n", os.Args[1])
 		os.Exit(2)
 	}
 }
@@ -49,7 +52,7 @@ func main() {
 func sleepDurArg(idx int) time.Duration {
 	ms, err := strconv.Atoi(os.Args[idx])
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bootstrap_helper: bad sleep ms %q: %v\n", os.Args[idx], err)
+		fmt.Fprintf(os.Stderr, "test_binary: bad sleep ms %q: %v\n", os.Args[idx], err)
 		os.Exit(2)
 	}
 	return time.Duration(ms) * time.Millisecond
@@ -142,6 +145,17 @@ func writeToReadonly() {
 	}
 }
 
+func connect() {
+	if len(os.Args) != 3 {
+		os.Exit(2)
+	}
+	conn, err := net.DialTimeout("tcp4", os.Args[2], 2*time.Second)
+	if err != nil {
+		os.Exit(10)
+	}
+	_ = conn.Close()
+}
+
 // readMustBeDenied expects the read to be blocked by policy. If the read
 // unexpectedly succeeds, exit 10
 // if it is denied as expected, exit 0.
@@ -182,18 +196,18 @@ func parentReadAllowedChildReadDenied() {
 func filelessExec() {
 	self, err := os.ReadFile("/proc/self/exe")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bootstrap_helper: read self: %v\n", err)
+		fmt.Fprintf(os.Stderr, "test_binary: read self: %v\n", err)
 		os.Exit(2)
 	}
 
 	// flags = 0 (no MFD_CLOEXEC) so the descriptor survives execve.
 	fd, err := unix.MemfdCreate("bomfather-fileless", 0)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bootstrap_helper: memfd_create: %v\n", err)
+		fmt.Fprintf(os.Stderr, "test_binary: memfd_create: %v\n", err)
 		os.Exit(2)
 	}
 	if _, err := unix.Write(fd, self); err != nil {
-		fmt.Fprintf(os.Stderr, "bootstrap_helper: write memfd: %v\n", err)
+		fmt.Fprintf(os.Stderr, "test_binary: write memfd: %v\n", err)
 		os.Exit(2)
 	}
 
@@ -201,7 +215,7 @@ func filelessExec() {
 	// If Exec succeeds the image is replaced and FilelessRan runs (exit 12).
 	// If it returns, execution was blocked -> correctly denied.
 	execErr := syscall.Exec(path, []string{path, command.FilelessRan}, os.Environ())
-	fmt.Fprintf(os.Stderr, "bootstrap_helper: fileless exec blocked: %v\n", execErr)
+	fmt.Fprintf(os.Stderr, "test_binary: fileless exec blocked: %v\n", execErr)
 	os.Exit(0)
 }
 

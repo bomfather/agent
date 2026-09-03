@@ -1,4 +1,4 @@
-// Package command holds bootstrap_helper argv subcommand names shared by the
+// Package command holds test binary argv subcommand names shared by the
 // helper binary and integration tests.
 package command
 
@@ -8,6 +8,7 @@ const (
 	Read                    = "read"
 	ReadAndBlocked          = "read-and-blocked" // Read a file which should succeed and then read a blocked file should not be allowed
 	WriteToReadonly         = "write-to-readonly"
+	Connect                 = "connect"             // Connect to a TCP endpoint; failure means the connect did not succeed
 	ReadMustBeDenied        = "read-must-be-denied" // Read a file that must be blocked; success is a failure
 
 	// ParentReadAllowedChildReadDenied verifies negative inheritance: the parent

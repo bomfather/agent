@@ -27,8 +27,8 @@ type RunningAgent struct {
 }
 
 var (
-	bootstrapHelperOnce sync.Once
-	bootstrapHelperPath string
+	testBinaryOnce sync.Once
+	testBinaryPath string
 )
 
 // waitForAgentReady waits for the agent to be ready by checking its stdout for a specific log line.
@@ -126,36 +126,36 @@ func runAgentInDir(t *testing.T, tempDir, config string) *RunningAgent {
 	}
 }
 
-// bootstrapHelperExe builds the bootstrap helper binary and returns its path.
-func bootstrapHelperExe(t *testing.T) string {
+// buildTestBinary builds the shared integration test binary and returns its path.
+func buildTestBinary(t *testing.T) string {
 	t.Helper()
 
-	bootstrapHelperOnce.Do(func() {
+	testBinaryOnce.Do(func() {
 		integrationDir, err := os.Getwd()
 		if err != nil {
 			t.Fatalf("Failed to get current working directory: %v", err)
 		}
 
-		tmpDir, err := os.MkdirTemp("", "bomfather-bootstrap-helper-*")
+		tmpDir, err := os.MkdirTemp("", "bomfather-test-binary-*")
 		if err != nil {
-			t.Fatalf("Failed to create temporary directory for bootstrap helper: %v", err)
+			t.Fatalf("Failed to create temporary directory for test binary: %v", err)
 		}
 
-		bin := filepath.Join(tmpDir, "bootstrap_helper")
-		srcDir := filepath.Join(integrationDir, "testdata", "bootstrap_helper")
+		bin := filepath.Join(tmpDir, "integration_test_binary")
+		testBinarySrcDir := filepath.Join(integrationDir, "testdata", "test_binary")
 		cmd := exec.Command("go", "build", "-o", bin, ".")
-		cmd.Dir = srcDir
+		cmd.Dir = testBinarySrcDir
 		buildLog, err := cmd.CombinedOutput()
 		if err != nil {
 			_, _ = os.Stderr.Write(buildLog)
-			t.Fatalf("Failed to build bootstrap helper: %v", err)
+			t.Fatalf("Failed to build test binary: %v", err)
 			return
 		}
 
-		bootstrapHelperPath = bin
+		testBinaryPath = bin
 	})
 
-	return bootstrapHelperPath
+	return testBinaryPath
 }
 
 func mustResolveExecutable(t *testing.T, name string) string {
