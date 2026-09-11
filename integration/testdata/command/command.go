@@ -16,6 +16,7 @@ const (
 	GetFDID                          = "get-fd-id"
 	List                             = "list"
 	Update                           = "update"
+	LoadProg                         = "load-prog"
 	ExitBlocked                      = 0
 	ExitAccessible                   = 10
 	ExitError                        = 2

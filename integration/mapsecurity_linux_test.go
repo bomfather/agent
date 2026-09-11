@@ -3,6 +3,7 @@ package integration
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,6 +32,33 @@ flags:
   secure_maps: false
   disable_bpf_ops: false
 `
+
+// unrestrictedBPFOpsPolicy disables the BPF-ops restriction entirely
+// (disable_bpf_ops: true leaves restrict_bpf_ops unset), so any process may
+// perform BPF_PROG_LOAD without being allowlisted. Note the flag is a
+// double-negative: disable_bpf_ops: true means the restriction is OFF.
+const unrestrictedBPFOpsPolicy = `
+flags:
+  security_level: "sandbox"
+  secure_maps: true
+  disable_bpf_ops: true
+`
+
+// bpfOpsAllowlistPolicy returns securedPolicy augmented with an allowed_bpf_ops
+// attribute for the given executable path. restrict_bpf_ops stays armed, so any
+// foreign process is denied BPF_PROG_LOAD except the allowlisted executable.
+func bpfOpsAllowlistPolicy(execPath string) string {
+	return fmt.Sprintf(`
+flags:
+  security_level: "sandbox"
+  secure_maps: true
+  disable_bpf_ops: false
+
+attributes:
+  - path: "type = executable | filepath = %s"
+    allowed_bpf_ops: true
+`, execPath)
+}
 
 // TestMapSecurityBlocksForeignAccess runs the real agent under two policies and
 // uses the maps helper (a foreign process) to confirm secure_maps controls
@@ -139,4 +167,39 @@ func runMapsHelper(t *testing.T, helper string, args ...string) int {
 	}
 	t.Fatalf("run maps helper %v: %v\n%s", args, err, output.String())
 	return -1
+}
+
+func TestBPFProgLoadAllowlist(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("requires root")
+	}
+
+	helper := buildTestBinary(t)
+
+	t.Run("not allowlisted: load is blocked", func(t *testing.T) {
+		_, stop := runMapSecurityAgent(t, securedPolicy)
+		defer stop()
+
+		if code := runMapsHelper(t, helper, command.LoadProg); code != command.ExitBlocked {
+			t.Fatalf("loading a BPF program should be blocked, got exit %d (want %d)", code, command.ExitBlocked)
+		}
+	})
+
+	t.Run("allowlisted: load is allowed", func(t *testing.T) {
+		_, stop := runMapSecurityAgent(t, bpfOpsAllowlistPolicy(helper))
+		defer stop()
+
+		if code := runMapsHelper(t, helper, command.LoadProg); code != command.ExitAccessible {
+			t.Fatalf("allowlisted executable should load a BPF program, got exit %d (want %d)", code, command.ExitAccessible)
+		}
+	})
+
+	t.Run("bpf ops unrestricted: load is allowed without allowlist", func(t *testing.T) {
+		_, stop := runMapSecurityAgent(t, unrestrictedBPFOpsPolicy)
+		defer stop()
+
+		if code := runMapsHelper(t, helper, command.LoadProg); code != command.ExitAccessible {
+			t.Fatalf("load should be allowed when restrict_bpf_ops is off, got exit %d (want %d)", code, command.ExitAccessible)
+		}
+	})
 }
