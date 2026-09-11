@@ -94,6 +94,7 @@ const (
 	SecurityLevelMapName                 = "bomfather_security_level"
 	RestrictBPFOpsMapName                = "bomfather_restrict_bpf_ops"
 	FsVerityPinlistMapName               = "bomfather_fsverity_pinlist"
+	AllowedBPFOpsExecutablesMapName      = "bomfather_allowed_bpf_ops_executables"
 )
 
 type Program any

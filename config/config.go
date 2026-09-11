@@ -66,6 +66,7 @@ type Attribute struct {
 	AllowedLDEnv     bool     `yaml:"allowed_ld_env"`
 	AllowedPtrace    bool     `yaml:"allowed_ptrace"`
 	AllowedGPU       bool     `yaml:"allowed_gpu"`
+	AllowedBPFOps    bool     `yaml:"allowed_bpf_ops"`
 	OutputOpenats    bool     `yaml:"output_openats_for_executable"`
 	GlobalReadOnly   bool     `yaml:"global_read_only"`
 	CanOnlyAccessIPs []string `yaml:"can_only_access_ips"`
@@ -839,6 +840,7 @@ func parseConfigFromStruct(config Config, debugEnabled bool) ([]agentebpf.EBPFMa
 
 	allowedPtraceExecutables := agentebpf.EBPFMapWrite{MapName: agentebpf.AllowedPtraceExecutablesMapName, Entries: make(map[any]any)}
 	ldEnvAllowedExecutables := agentebpf.EBPFMapWrite{MapName: agentebpf.LDEnvAllowedExecutablesMapName, Entries: make(map[any]any)}
+	allowedBPFOpsExecutables := agentebpf.EBPFMapWrite{MapName: agentebpf.AllowedBPFOpsExecutablesMapName, Entries: make(map[any]any)}
 
 	for _, attribute := range config.Attributes {
 		parsedPath, err := pathParser(attribute.Path)
@@ -852,9 +854,20 @@ func parseConfigFromStruct(config Config, debugEnabled bool) ([]agentebpf.EBPFMa
 
 		switch parsedPath.Type {
 		case "executable":
+			if attribute.AllowedBPFOps {
+				allowedBPFOpsExecutables.Entries[pathKeyWithSlash] = uint32(1)
+				allowedBPFOpsExecutables.Entries[pathKeyWithoutSlash] = uint32(1)
+			}
+
 			var accessControl AccessControlValue
 			accessControl, ok := trustedExecutables.Entries[pathKeyWithSlash].(AccessControlValue)
 			if !ok {
+				// If the only attribute set is the BPF-ops exemption, there is
+				// no access-control entry to augment; nothing more to do.
+				if attribute.AllowedBPFOps && !attribute.AllowedGPU && !attribute.AllowedPtrace &&
+					!attribute.AllowedLDEnv && !attribute.OutputOpenats && len(attribute.CanOnlyAccessIPs) == 0 {
+					continue
+				}
 				return nil, nil, nil, nil, fmt.Errorf("failed to get access control value for path key %v", pathKeyWithSlash)
 			}
 			if attribute.AllowedGPU {
@@ -891,7 +904,7 @@ func parseConfigFromStruct(config Config, debugEnabled bool) ([]agentebpf.EBPFMa
 		}
 	}
 
-	mapsArray = append(mapsArray, trustedExecutables, allowedPtraceExecutables, ldEnvAllowedExecutables, globalReadOnly, fsverityPinlist, pythonIdentifiers)
+	mapsArray = append(mapsArray, trustedExecutables, allowedPtraceExecutables, ldEnvAllowedExecutables, allowedBPFOpsExecutables, globalReadOnly, fsverityPinlist, pythonIdentifiers)
 	ipToIDMap, err := setupIPtoIDMap(networkIDMapper, networkToConvert)
 	if err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("failed to setup ip to id map: %w", err)

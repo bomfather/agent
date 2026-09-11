@@ -4,6 +4,10 @@ policies:
     can_access_dirs:
       - "[absolute_path]/agent/example/protected:read"
 
+attributes:
+  - path: "type = executable | filepath = /usr/local/bin/my-bpf-tool"
+    allowed_bpf_ops: true
+
 flags:
   security_level: "sandbox"
   disable_bpf_ops: true

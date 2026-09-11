@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/cilium/ebpf"
+	"github.com/cilium/ebpf/asm"
 	"golang.org/x/sys/unix"
 
 	"github.com/bomfather/bomfather/agent/integration/testdata/command"
@@ -54,6 +55,8 @@ func main() {
 		os.Exit(listMaps(mapsPidArg()))
 	case command.Update:
 		os.Exit(updateMap(mapsPidArg(), mapsNameArg()))
+	case command.LoadProg:
+		os.Exit(loadProg())
 	default:
 		fmt.Fprintf(os.Stderr, "test_binary: unknown subcommand %q\n", os.Args[1])
 		os.Exit(2)
@@ -190,9 +193,6 @@ func connect() {
 	_ = conn.Close()
 }
 
-// readMustBeDenied expects the read to be blocked by policy. If the read
-// unexpectedly succeeds, exit 10
-// if it is denied as expected, exit 0.
 func readMustBeDenied() {
 	if len(os.Args) != 3 {
 		os.Exit(2)
@@ -460,4 +460,25 @@ func readMapID(pid, fdID int) (int, bool) {
 		}
 	}
 	return 0, false
+}
+func loadProg() int {
+	prog, err := ebpf.NewProgram(&ebpf.ProgramSpec{
+		Type: ebpf.SocketFilter,
+		Instructions: asm.Instructions{
+			asm.Mov.Imm(asm.R0, 0),
+			asm.Return(),
+		},
+		License: "GPL",
+	})
+	if err != nil {
+		if isDenied(err) {
+			fmt.Fprintf(os.Stderr, "BPF_PROG_LOAD denied: %s\n", reason(err))
+			return command.ExitBlocked
+		}
+		fmt.Fprintf(os.Stderr, "BPF_PROG_LOAD error: %v\n", err)
+		return command.ExitError
+	}
+	prog.Close()
+	fmt.Fprintln(os.Stderr, "BPF_PROG_LOAD succeeded")
+	return command.ExitAccessible
 }

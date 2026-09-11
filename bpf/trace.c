@@ -64,6 +64,7 @@ const volatile int pid_target = 0; // Volatile constant for the target PID; if 0
 #define TEMP_CONTAINER_PATH_BPRM 3
 #define TEMP_CONTAINER_PATH_ALLOWED_PTRACE_EXECUTABLE 4
 #define TEMP_CONTAINER_PATH_FSVERITY 5
+#define TEMP_CONTAINER_PATH_ALLOWED_BPF_OPS_EXECUTABLE 6
 #define TEMP_FILEPATH_TASK_CWD 10
 
 // Index's for file_info temp map
@@ -360,6 +361,15 @@ struct {
     __type(value, u32);
 } bomfather_allowed_ptrace_executables SEC(".maps");
 
+// Executables allowed to perform restricted BPF operations (BPF_PROG_LOAD /
+// BPF_OBJ_PIN) even when bomfather_restrict_bpf_ops is enabled.
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 100);
+    __type(key, struct path_key);
+    __type(value, u32);
+} bomfather_allowed_bpf_ops_executables SEC(".maps");
+
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 30);
@@ -550,7 +560,7 @@ struct {
 // Temporary storage for composite keys (avoid large stack frames)
 struct {
     __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
-    __uint(max_entries, 6);
+    __uint(max_entries, 7);
     __type(key, u32);
     __type(value, struct path_key);
 } bomfather_temp_path_key_map SEC(".maps");
@@ -1600,6 +1610,26 @@ int BPF_PROG(lsm_bpf_map, struct bpf_map *map, fmode_t fmode) {
     return 0;
 }
 
+// Returns true if the current process's executable is allowlisted to perform
+// restricted BPF operations.
+static __always_inline bool is_allowed_bpf_ops_executable(void) {
+    struct task_struct *task = bpf_get_current_task_btf();
+    if (!task)
+        return false;
+
+    struct task_ctx *tctx = get_task_ctx_safe(task);
+    if (!tctx)
+        return false;
+
+    struct path_key *pkey = make_path_key_from_current_mnt_ns(
+        tctx->execve_event.exepath, TEMP_CONTAINER_PATH_ALLOWED_BPF_OPS_EXECUTABLE);
+    if (!pkey)
+        return false;
+
+    u32 *allowed = bpf_map_lookup_elem(&bomfather_allowed_bpf_ops_executables, pkey);
+    return allowed != NULL && *allowed != 0;
+}
+
 static __always_inline bool enforce_bpf_op_policy(int cmd) {
     if (cmd != BPF_PROG_LOAD && cmd != BPF_OBJ_PIN &&
         cmd != BPF_MAP_UPDATE_ELEM &&
@@ -1617,6 +1647,9 @@ static __always_inline bool enforce_bpf_op_policy(int cmd) {
 
     u32 pid = bpf_get_current_pid_tgid() >> 32;
     if (bpf_map_lookup_elem(&bomfather_userspace_process_pid, &pid))
+        return false;
+
+    if (is_allowed_bpf_ops_executable())
         return false;
 
     struct process_id process = {0};
