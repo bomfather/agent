@@ -22,13 +22,13 @@ func TestCanOnlyAccessIPsRestrictsEgress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen allowed: %v", err)
 	}
-	defer allowedLn.Close()
+	defer func() { _ = allowedLn.Close() }()
 
 	blockedLn, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen blocked: %v", err)
 	}
-	defer blockedLn.Close()
+	defer func() { _ = blockedLn.Close() }()
 
 	serve := func(ln net.Listener) {
 		go func() {
