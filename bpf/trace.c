@@ -1601,7 +1601,13 @@ int BPF_PROG(lsm_bpf_map, struct bpf_map *map, fmode_t fmode) {
 }
 
 static __always_inline bool enforce_bpf_op_policy(int cmd) {
-    if (cmd != BPF_PROG_LOAD && cmd != BPF_OBJ_PIN)
+    if (cmd != BPF_PROG_LOAD && cmd != BPF_OBJ_PIN &&
+        cmd != BPF_MAP_UPDATE_ELEM &&
+        cmd != BPF_MAP_DELETE_ELEM &&
+        cmd != BPF_MAP_LOOKUP_AND_DELETE_ELEM &&
+        cmd != BPF_MAP_UPDATE_BATCH &&
+        cmd != BPF_MAP_DELETE_BATCH &&
+        cmd != BPF_MAP_LOOKUP_AND_DELETE_BATCH)
         return false;
 
     u32 zero = 0;
@@ -1617,8 +1623,10 @@ static __always_inline bool enforce_bpf_op_policy(int cmd) {
     get_process_id(&process);
     if (cmd == BPF_PROG_LOAD)
         push_violation("bpf_prog_load", VIOL_BPF_LOAD, &process);
-    else
+    else if (cmd == BPF_OBJ_PIN)
         push_violation("bpf_obj_pin", VIOL_BPF_PIN, &process);
+    else
+        push_violation("bpf_map_write", VIOL_MAP_SECURITY, &process);
 
     return true;
 }

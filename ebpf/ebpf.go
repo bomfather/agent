@@ -586,15 +586,17 @@ func InitializeEBPF(bpfProgram []byte, mapWrites []EBPFMapWrite, hasSecureShutdo
 		}
 	}
 
-	if err := freezePolicyMaps(coll); err != nil {
-		coll.Close()
-		return nil, fmt.Errorf("failed to freeze policy maps: %w", err)
-	}
-
-	// Jump table
+	// Jump table. Populated before freezing so the jump-table maps can be frozen
+	// too: their program-FD entries are written once here and only read from the
+	// BPF side (via bpf_tail_call) thereafter.
 	if err := setupJumpTable(coll); err != nil {
 		coll.Close()
 		return nil, fmt.Errorf("failed to setup jump table: %w", err)
+	}
+
+	if err := freezePolicyMaps(coll); err != nil {
+		coll.Close()
+		return nil, fmt.Errorf("failed to freeze policy maps: %w", err)
 	}
 
 	programLinks, err := attachPrograms(coll)
@@ -618,18 +620,36 @@ func InitializeEBPF(bpfProgram []byte, mapWrites []EBPFMapWrite, hasSecureShutdo
 	}, nil
 }
 
+// freezePolicyMaps freezes the policy maps that the agent updates at runtime.
+// The maps that the agent updates at runtime must NOT be added here, for example:
+//   - IPToIDMapName (refreshed by RefreshDNSPolicy), and
+//   - the container-context maps (updated by the CRI watcher).
 func freezePolicyMaps(coll *ebpf.Collection) error {
 	return freezeMaps(coll,
+		// Allowlist / policy maps.
 		TrustedExecutablesMapName,
 		LDEnvAllowedExecutablesMapName,
 		AllowedPtraceExecutablesMapName,
 		DirToIDMapName,
 		ExecutableToIDMapName,
 		ExclusiveIPMaskMapName,
-		RestrictGPUMapName,
 		GlobalReadOnlyMapName,
 		FsVerityPinlistMapName,
 		PythonIdentifierMapName,
+		SecurityLevelMapName,
+		RestrictBPFOpsMapName,
+		ShouldSecureMapsMapName,
+		UserspaceProcessPIDMapName,
+		BlockPtraceMapName,
+		BlockInMemoryExecMapName,
+		RestrictGPUMapName,
+		ShouldStopLDEnvMapName,
+		ShouldStopShutdownMapName,
+		ShouldOutputOpenatsMapName,
+		DebugPrintingMapName,
+		BootIDMapName,
+		FileOpenJumpTableMapName,
+		MountCheckJumpTableMapName,
 	)
 }
 
