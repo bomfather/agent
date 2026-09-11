@@ -586,6 +586,11 @@ func InitializeEBPF(bpfProgram []byte, mapWrites []EBPFMapWrite, hasSecureShutdo
 		}
 	}
 
+	if err := freezePolicyMaps(coll); err != nil {
+		coll.Close()
+		return nil, fmt.Errorf("failed to freeze policy maps: %w", err)
+	}
+
 	// Jump table
 	if err := setupJumpTable(coll); err != nil {
 		coll.Close()
@@ -611,4 +616,32 @@ func InitializeEBPF(bpfProgram []byte, mapWrites []EBPFMapWrite, hasSecureShutdo
 		Links:           programLinks,
 		Collection:      coll,
 	}, nil
+}
+
+func freezePolicyMaps(coll *ebpf.Collection) error {
+	return freezeMaps(coll,
+		TrustedExecutablesMapName,
+		LDEnvAllowedExecutablesMapName,
+		AllowedPtraceExecutablesMapName,
+		DirToIDMapName,
+		ExecutableToIDMapName,
+		ExclusiveIPMaskMapName,
+		RestrictGPUMapName,
+		GlobalReadOnlyMapName,
+		FsVerityPinlistMapName,
+		PythonIdentifierMapName,
+	)
+}
+
+func freezeMaps(coll *ebpf.Collection, names ...string) error {
+	for _, name := range names {
+		m, ok := coll.Maps[name]
+		if !ok {
+			return fmt.Errorf("map %q not found", name)
+		}
+		if err := m.Freeze(); err != nil {
+			return fmt.Errorf("freeze %q: %w", name, err)
+		}
+	}
+	return nil
 }
