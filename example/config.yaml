@@ -6,3 +6,6 @@ policies:
 
 flags:
   security_level: "sandbox"
+  disable_bpf_ops: true
+  enable_openat: false
+  secure_maps: true
