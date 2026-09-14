@@ -41,6 +41,10 @@ func main() {
 		readAndBlocked()
 	case command.WriteToReadonly:
 		writeToReadonly()
+	case command.Write:
+		write()
+	case command.WriteMustBeDenied:
+		writeMustBeDenied()
 	case command.Connect:
 		connect()
 	case command.ReadMustBeDenied:
@@ -179,6 +183,24 @@ func writeToReadonly() {
 	}
 	if _, err := readFirstLine(os.Args[3]); err != nil {
 		os.Exit(11)
+	}
+}
+
+func write() {
+	if len(os.Args) != 3 {
+		os.Exit(2)
+	}
+	if err := os.WriteFile(os.Args[2], []byte("modified\n"), 0o644); err != nil {
+		os.Exit(10)
+	}
+}
+
+func writeMustBeDenied() {
+	if len(os.Args) != 3 {
+		os.Exit(2)
+	}
+	if err := os.WriteFile(os.Args[2], []byte("modified\n"), 0o644); err == nil {
+		os.Exit(10)
 	}
 }
 
