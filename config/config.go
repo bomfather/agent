@@ -1,7 +1,9 @@
 package config
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
@@ -118,6 +120,7 @@ type IPToIDKey struct {
 }
 
 type BitmaskArray [bitmaskWords]uint32
+
 type AccessControlValue struct {
 	Read             BitmaskArray
 	Write            BitmaskArray
@@ -128,11 +131,29 @@ type AccessControlValue struct {
 	OutputOpenats    uint32
 }
 
+type restrictedExecutableLPMKey struct {
+	Length uint32
+	Data   [agentebpf.FILE_CHUNK_SIZE + 1 + 8]byte
+	Pad    [3]byte
+}
+
+type chunkToIDKey [agentebpf.FILE_CHUNK_SIZE + 1 + 8]byte
+
+type chunk struct {
+	chunkID             uint32
+	matchingAccessIndex uint32
+}
+
 // --------------- Types for the policy ID mapper ---------------
 
 type PolicyIDMapper struct {
 	pathToID map[any]uint32
 	nextID   uint32
+}
+
+type RandomIDMapper struct {
+	pathToID map[any]uint32
+	usedIDs  map[uint32]struct{}
 }
 
 type NetworkToConvert struct {
@@ -142,6 +163,10 @@ type NetworkToConvert struct {
 
 func NewPolicyIDMapper() *PolicyIDMapper {
 	return &PolicyIDMapper{pathToID: make(map[any]uint32)}
+}
+
+func NewRandomIDMapper() *RandomIDMapper {
+	return &RandomIDMapper{pathToID: make(map[any]uint32), usedIDs: make(map[uint32]struct{})}
 }
 
 func (m *PolicyIDMapper) GetOrAssign(key any) uint32 {
@@ -159,8 +184,165 @@ func (m *PolicyIDMapper) GetOrAssign(key any) uint32 {
 	return m.nextID
 }
 
+func (m *RandomIDMapper) GetOrAssign(key any) (uint32, error) {
+	if key == nil {
+		return 0, nil
+	}
+
+	if id, exists := m.pathToID[key]; exists {
+		return id, nil
+	}
+
+	var raw [4]byte
+	for {
+		if _, err := rand.Read(raw[:]); err != nil {
+			return 0, fmt.Errorf("failed to read random chunk id: %w", err)
+		}
+
+		id := binary.NativeEndian.Uint32(raw[:])
+		if id == 0 {
+			continue
+		}
+		if _, exists := m.usedIDs[id]; exists {
+			continue
+		}
+
+		m.pathToID[key] = id
+		m.usedIDs[id] = struct{}{}
+		return id, nil
+	}
+}
+
 func (m *PolicyIDMapper) Set(key any, value uint32) {
 	m.pathToID[key] = value
+}
+
+func pathKeyLength(pathKey PathKey) int {
+	if n := bytes.IndexByte(pathKey.DirectoryPath[:], 0); n >= 0 {
+		return n
+	}
+	return len(pathKey.DirectoryPath)
+}
+
+func copyBPFStringPayload(dst []byte, src []byte) {
+	if len(dst) == 0 {
+		return
+	}
+	copyLen := len(src)
+	if copyLen > len(dst)-1 {
+		copyLen = len(dst) - 1
+	}
+	if copyLen > 0 {
+		copy(dst[:copyLen], src[:copyLen])
+	}
+}
+
+func buildRestrictedPathKeys(pathKey PathKey, chunkIDMapper *RandomIDMapper) (restrictedExecutableLPMKey, map[chunkToIDKey]chunk, error) {
+	pathLength := pathKeyLength(pathKey)
+	if pathLength == 0 {
+		return restrictedExecutableLPMKey{}, nil, fmt.Errorf("path is empty")
+	}
+
+	currentChunkID := uint32(0)
+	chunkIndex := 0
+	chunkEntries := make(map[chunkToIDKey]chunk)
+
+	for ; chunkIndex < agentebpf.INPUT_PATH_MAX/agentebpf.FILE_CHUNK_SIZE; chunkIndex++ {
+		chunkOffset := chunkIndex * agentebpf.FILE_CHUNK_SIZE
+		if pathLength-chunkOffset < agentebpf.FILE_CHUNK_SIZE {
+			break
+		}
+
+		var chunkKey chunkToIDKey
+		binary.NativeEndian.PutUint32(chunkKey[0:4], pathKey.PolicyID)
+		binary.NativeEndian.PutUint32(chunkKey[4:8], currentChunkID)
+		copyBPFStringPayload(chunkKey[8:], pathKey.DirectoryPath[chunkOffset:pathLength])
+
+		if chunkKey[8] == 0 {
+			break
+		}
+
+		chunkID, err := chunkIDMapper.GetOrAssign(chunkKey)
+		if err != nil {
+			return restrictedExecutableLPMKey{}, nil, fmt.Errorf("failed to assign random chunk id: %w", err)
+		}
+		chunkEntries[chunkKey] = chunk{chunkID: chunkID, matchingAccessIndex: agentebpf.INVALID_ACCESS_INDEX}
+		currentChunkID = chunkID
+	}
+
+	inputPathOffset := chunkIndex * agentebpf.FILE_CHUNK_SIZE
+	inputPathLen := 0
+	if inputPathOffset < pathLength {
+		inputPathLen = pathLength - inputPathOffset
+		if inputPathLen > agentebpf.FILE_CHUNK_SIZE {
+			inputPathLen = agentebpf.FILE_CHUNK_SIZE
+		}
+	}
+
+	var lpmKey restrictedExecutableLPMKey
+	lpmKey.Length = uint32(inputPathLen+(2*4)) * 8
+	binary.NativeEndian.PutUint32(lpmKey.Data[0:4], pathKey.PolicyID)
+	binary.NativeEndian.PutUint32(lpmKey.Data[4:8], currentChunkID)
+	if inputPathLen > 0 {
+		copyBPFStringPayload(lpmKey.Data[8:], pathKey.DirectoryPath[inputPathOffset:pathLength])
+	}
+
+	return lpmKey, chunkEntries, nil
+}
+
+func addToChunkEntries(chunkEntries map[any]any, accessIndexToPathLen map[uint32]int, matchingAccessIndex uint32, pathKey1, pathKey2 PathKey) (map[any]any, error) {
+	// find out at what index do the paths differ, not at a character
+	diffIndex := pathKeyLength(pathKey1)
+
+	for i := 0; i < pathKeyLength(pathKey1); i++ {
+		if pathKey1.DirectoryPath[i] != pathKey2.DirectoryPath[i] {
+			diffIndex = i
+			break
+		}
+	}
+
+	start := (diffIndex / agentebpf.FILE_CHUNK_SIZE) * agentebpf.FILE_CHUNK_SIZE
+	pathKey2Length := pathKeyLength(pathKey2)
+	currentChunkID := uint32(0)
+
+	for chunkOffset := 0; chunkOffset < start; chunkOffset += agentebpf.FILE_CHUNK_SIZE {
+		var chunkKey chunkToIDKey
+		binary.NativeEndian.PutUint32(chunkKey[0:4], pathKey2.PolicyID)
+		binary.NativeEndian.PutUint32(chunkKey[4:8], currentChunkID)
+		copyBPFStringPayload(chunkKey[8:], pathKey2.DirectoryPath[chunkOffset:pathKey2Length])
+
+		chunkRaw, ok := chunkEntries[chunkKey]
+		if !ok {
+			return nil, fmt.Errorf("failed to find chunk entry for policy %d at offset %d", pathKey2.PolicyID, chunkOffset)
+		}
+		chunk, ok := chunkRaw.(chunk)
+		if !ok {
+			return nil, fmt.Errorf("failed to convert chunk %T to chunk", chunkRaw)
+		}
+		currentChunkID = chunk.chunkID
+	}
+
+	var diffChunkKey chunkToIDKey
+	binary.NativeEndian.PutUint32(diffChunkKey[0:4], pathKey2.PolicyID)
+	binary.NativeEndian.PutUint32(diffChunkKey[4:8], currentChunkID)
+	copyBPFStringPayload(diffChunkKey[8:], pathKey2.DirectoryPath[start:pathKey2Length])
+
+	chunkRaw, ok := chunkEntries[diffChunkKey]
+	if !ok {
+		return chunkEntries, nil
+	}
+
+	chunk, ok := chunkRaw.(chunk)
+	if !ok {
+		return nil, fmt.Errorf("failed to convert chunk %T to chunk", chunkRaw)
+	}
+
+	if accessIndexToPathLen == nil || pathKeyLength(pathKey1) > accessIndexToPathLen[chunk.matchingAccessIndex] {
+		chunk.matchingAccessIndex = matchingAccessIndex
+		chunkEntries[diffChunkKey] = chunk
+	}
+
+	return chunkEntries, nil
 }
 
 func (m *PolicyIDMapper) ToMapList(name string) agentebpf.EBPFMapWrite {
@@ -752,8 +934,14 @@ func parseConfigFromStruct(config Config, debugEnabled bool) ([]agentebpf.EBPFMa
 
 	trustedExecutables := agentebpf.EBPFMapWrite{MapName: agentebpf.TrustedExecutablesMapName, Entries: make(map[any]any)}
 	globalReadOnly := agentebpf.EBPFMapWrite{MapName: agentebpf.GlobalReadOnlyMapName, Entries: make(map[any]any)}
+	globalReadOnlyChunkToID := agentebpf.EBPFMapWrite{MapName: agentebpf.GlobalReadOnlyChunkToIDMapName, Entries: make(map[any]any)}
 	fsverityPinlist := agentebpf.EBPFMapWrite{MapName: agentebpf.FsVerityPinlistMapName, Entries: make(map[any]any)}
 	pythonIdentifiers := agentebpf.EBPFMapWrite{MapName: agentebpf.PythonIdentifierMapName, Entries: make(map[any]any)}
+	restrictedExecutables := agentebpf.EBPFMapWrite{MapName: agentebpf.RestrictedExecutableMapName, Entries: make(map[any]any)}
+	restrictedExecutableChunkToID := agentebpf.EBPFMapWrite{MapName: agentebpf.RestrictedExecutableChunkToIDMapName, Entries: make(map[any]any)}
+	chunkIDMapper := NewRandomIDMapper()
+	globalReadOnlyPathKeys := make(map[PathKey]struct{})
+	globalReadOnlyChunkIDMapper := NewRandomIDMapper()
 
 	for _, policy := range config.Policies {
 		executable := policy.Executable
@@ -771,8 +959,8 @@ func parseConfigFromStruct(config Config, debugEnabled bool) ([]agentebpf.EBPFMa
 				if err != nil {
 					return nil, nil, nil, nil, fmt.Errorf("failed to get path key for python libs %q: %w", lib, err)
 				}
-				globalReadOnly.Entries[libsKeyWithSlash] = uint32(1)
-				globalReadOnly.Entries[libsKeyWithoutSlash] = uint32(1)
+				globalReadOnlyPathKeys[libsKeyWithSlash] = struct{}{}
+				globalReadOnlyPathKeys[libsKeyWithoutSlash] = struct{}{}
 			}
 		}
 
@@ -896,15 +1084,102 @@ func parseConfigFromStruct(config Config, debugEnabled bool) ([]agentebpf.EBPFMa
 
 		case "filepath":
 			if attribute.GlobalReadOnly {
-				globalReadOnly.Entries[pathKeyWithSlash] = uint32(1)
-				globalReadOnly.Entries[pathKeyWithoutSlash] = uint32(1)
+				globalReadOnlyPathKeys[pathKeyWithSlash] = struct{}{}
+				globalReadOnlyPathKeys[pathKeyWithoutSlash] = struct{}{}
 			}
 		default:
 			return nil, nil, nil, nil, fmt.Errorf("invalid attribute type %q", parsedPath.Type)
 		}
 	}
 
-	mapsArray = append(mapsArray, trustedExecutables, allowedPtraceExecutables, ldEnvAllowedExecutables, allowedBPFOpsExecutables, globalReadOnly, fsverityPinlist, pythonIdentifiers)
+	restrictedExecutablePathLenByAccessIndex := make(map[uint32]int, len(dirIDMapper.pathToID))
+	restrictedExecutableAccessIndexByPathKey := make(map[PathKey]uint32, len(dirIDMapper.pathToID))
+	restrictedExecutablePathKeys := make(map[PathKey]struct{}, len(dirIDMapper.pathToID))
+	for rawKey, rawID := range dirIDMapper.pathToID {
+		pathKey, ok := rawKey.(PathKey)
+		if !ok {
+			return nil, nil, nil, nil, fmt.Errorf("failed to convert restricted path key %T to PathKey", rawKey)
+		}
+
+		restrictedExecutablePathKeys[pathKey] = struct{}{}
+		restrictedExecutableAccessIndexByPathKey[pathKey] = rawID
+		restrictedExecutablePathLenByAccessIndex[rawID] = pathKeyLength(pathKey)
+
+		lpmKey, chunkEntries, err := buildRestrictedPathKeys(pathKey, chunkIDMapper)
+		if err != nil {
+			return nil, nil, nil, nil, fmt.Errorf("failed to build restricted path keys for policy %d: %w", pathKey.PolicyID, err)
+		}
+
+		restrictedExecutables.Entries[lpmKey] = rawID
+		for chunkKey, chunkID := range chunkEntries {
+			restrictedExecutableChunkToID.Entries[chunkKey] = chunkID
+		}
+	}
+
+	for pathKey1 := range restrictedExecutablePathKeys {
+		for pathKey2 := range restrictedExecutablePathKeys {
+			if pathKey1.PolicyID != pathKey2.PolicyID || pathKey1 == pathKey2 {
+				continue
+			}
+			if pathKeyLength(pathKey1) > pathKeyLength(pathKey2) {
+				continue
+			}
+
+			if bytes.HasPrefix(
+				pathKey2.DirectoryPath[:pathKeyLength(pathKey2)],
+				pathKey1.DirectoryPath[:pathKeyLength(pathKey1)],
+			) {
+				newChunkEntries, err := addToChunkEntries(
+					restrictedExecutableChunkToID.Entries,
+					restrictedExecutablePathLenByAccessIndex,
+					restrictedExecutableAccessIndexByPathKey[pathKey1],
+					pathKey1,
+					pathKey2,
+				)
+				if err != nil {
+					return nil, nil, nil, nil, fmt.Errorf("failed to add to chunk entries: %w", err)
+				}
+				restrictedExecutableChunkToID.Entries = newChunkEntries
+			}
+		}
+	}
+
+	for pathKey := range globalReadOnlyPathKeys {
+		lpmKey, chunkEntries, err := buildRestrictedPathKeys(pathKey, globalReadOnlyChunkIDMapper)
+		if err != nil {
+			return nil, nil, nil, nil, fmt.Errorf("failed to build global read only path keys for policy %d: %w", pathKey.PolicyID, err)
+		}
+
+		globalReadOnly.Entries[lpmKey] = uint32(1)
+		for chunkKey, chunkID := range chunkEntries {
+			globalReadOnlyChunkToID.Entries[chunkKey] = chunkID
+		}
+	}
+
+	for pathKey1 := range globalReadOnlyPathKeys {
+		for pathKey2 := range globalReadOnlyPathKeys {
+			if pathKey1.PolicyID != pathKey2.PolicyID || pathKey1 == pathKey2 {
+				continue
+			}
+			if pathKeyLength(pathKey1) > pathKeyLength(pathKey2) {
+				continue
+			}
+
+			if bytes.HasPrefix(
+				pathKey2.DirectoryPath[:pathKeyLength(pathKey2)],
+				pathKey1.DirectoryPath[:pathKeyLength(pathKey1)],
+			) {
+				newChunkEntries, err := addToChunkEntries(globalReadOnlyChunkToID.Entries, nil, uint32(1), pathKey1, pathKey2)
+				if err != nil {
+					return nil, nil, nil, nil, fmt.Errorf("failed to add to chunk entries: %w", err)
+				}
+				globalReadOnlyChunkToID.Entries = newChunkEntries
+			}
+		}
+	}
+
+	mapsArray = append(mapsArray, trustedExecutables, allowedBPFOpsExecutables, allowedPtraceExecutables, ldEnvAllowedExecutables, globalReadOnly, globalReadOnlyChunkToID, fsverityPinlist, pythonIdentifiers, restrictedExecutables, restrictedExecutableChunkToID)
+
 	ipToIDMap, err := setupIPtoIDMap(networkIDMapper, networkToConvert)
 	if err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("failed to setup ip to id map: %w", err)

@@ -18,14 +18,16 @@ import (
 )
 
 const (
-	INPUT_PATH_MAX = 1024
-	BOOT_ID_MAX    = 41
-	TASK_COMM_LEN  = 16
-	MAX_EXACT_ARGS = 64
-	MAX_ARGS       = MAX_EXACT_ARGS + 1
-	MAX_ARG_LEN    = 128
-	LSM_LIST_PATH  = "/sys/kernel/security/lsm"
-	LSM_BPF_MODULE = "bpf"
+	INPUT_PATH_MAX  = 1024
+	FILE_CHUNK_SIZE = 128
+	BOOT_ID_MAX     = 41
+	TASK_COMM_LEN   = 16
+	MAX_EXACT_ARGS  = 64
+	INVALID_ACCESS_INDEX = ^uint32(0) 
+	MAX_ARGS        = MAX_EXACT_ARGS + 1
+	MAX_ARG_LEN     = 128
+	LSM_LIST_PATH   = "/sys/kernel/security/lsm"
+	LSM_BPF_MODULE  = "bpf"
 	// lsm/bpf hook signature changed in Linux 6.15:
 	// - v6.14: LSM_HOOK(int, 0, bpf, int cmd, union bpf_attr *attr, unsigned int size)
 	// - v6.15: LSM_HOOK(int, 0, bpf, int cmd, union bpf_attr *attr, unsigned int size, bool kernel)
@@ -81,6 +83,9 @@ const (
 	ShouldSecureMapsMapName              = "bomfather_should_secure_maps"
 	ShouldStopShutdownMapName            = "bomfather_should_stop_shutdown"
 	GlobalReadOnlyMapName                = "bomfather_global_read_only"
+	GlobalReadOnlyChunkToIDMapName       = "bomfather_global_read_only_chunk_to_id"
+	RestrictedExecutableChunkToIDMapName  = "bomfather_restricted_executable_chunk_to_id"
+	RestrictedExecutableMapName            = "bomfather_restricted_executable"
 	BootIDMapName                        = "bomfather_boot_id"
 	DebugPrintingMapName                 = "bomfather_debug_config"
 	TrustedExecutablesMapName            = "bomfather_trusted_executables"
@@ -185,20 +190,6 @@ type EBPFResources struct {
 }
 
 var basePrograms = []Program{
-	&LSMProgram{ProgName: "lsm_file_open"},
-	&LSMProgram{ProgName: "lsm_inode_permission"},
-	&LSMProgram{ProgName: "lsm_path_rename"},
-	&LSMProgram{ProgName: "lsm_path_unlink"},
-	&LSMProgram{ProgName: "lsm_path_rmdir"},
-	&LSMProgram{ProgName: "lsm_task_alloc"},
-	// &LSMProgram{ProgName: "lsm_file_permission"},
-	&LSMProgram{ProgName: "lsm_bprm_check_security"},
-	&LSMProgram{ProgName: "lsm_ptrace_access_check"},
-	&LSMProgram{ProgName: "lsm_socket_connect"},
-	&LSMProgram{ProgName: "lsm_sb_mount"},
-	&LSMProgram{ProgName: "lsm_mmap_file"},
-	&LSMProgram{ProgName: "lsm_socket_recvmsg"},
-	&LSMProgram{ProgName: "lsm_socket_sendmsg"},
 	&TracepointProgram{
 		ProgName:           "trace_execve",
 		TracepointCategory: "syscalls",
@@ -229,6 +220,20 @@ var basePrograms = []Program{
 		TracepointCategory: "sched",
 		TracepointName:     "sched_process_exit",
 	},
+	&LSMProgram{ProgName: "lsm_file_open"},
+	&LSMProgram{ProgName: "lsm_inode_permission"},
+	&LSMProgram{ProgName: "lsm_path_rename"},
+	&LSMProgram{ProgName: "lsm_path_unlink"},
+	&LSMProgram{ProgName: "lsm_path_rmdir"},
+	&LSMProgram{ProgName: "lsm_task_alloc"},
+	// &LSMProgram{ProgName: "lsm_file_permission"},
+	&LSMProgram{ProgName: "lsm_bprm_check_security"},
+	&LSMProgram{ProgName: "lsm_ptrace_access_check"},
+	&LSMProgram{ProgName: "lsm_socket_connect"},
+	&LSMProgram{ProgName: "lsm_sb_mount"},
+	&LSMProgram{ProgName: "lsm_mmap_file"},
+	&LSMProgram{ProgName: "lsm_socket_recvmsg"},
+	&LSMProgram{ProgName: "lsm_socket_sendmsg"},
 }
 
 var programs = append([]Program(nil), basePrograms...)
@@ -420,16 +425,16 @@ func attachPrograms(coll *ebpf.Collection) ([]link.Link, error) {
 			progLink, err = link.AttachLSM(link.LSMOptions{Program: prog})
 		}
 
-		if progLink == nil {
-			cleanupResources(coll, programLinks)
-			return nil, fmt.Errorf("program %q not found or failed to attach", progName)
-		}
-
 		if err != nil {
 			cleanupResources(coll, programLinks)
 			return nil, fmt.Errorf("failed to attach program %q: %w", progName, err)
 		}
 
+		if progLink == nil {
+			cleanupResources(coll, programLinks)
+			return nil, fmt.Errorf("program %q not found or failed to attach", progName)
+		}
+		
 		programLinks = append(programLinks, progLink)
 	}
 

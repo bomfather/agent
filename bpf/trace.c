@@ -12,8 +12,28 @@
 /// @description "Process ID to trace."
 const volatile int pid_target = 0; // Volatile constant for the target PID; if 0, trace all PIDs
 
-#define TASK_COMM_LEN 16
+#define BOMFATHER_RESTRICTED_EXECUTABLE_CHUNK_TO_ID 0
+#define BOMFATHER_GLOBAL_READ_ONLY_CHUNK_TO_ID 1
 
+// strings sizes 
+#define TASK_COMM_LEN 16
+#define INPUT_PATH_MAX 1024
+#define FILE_CHUNK_SIZE 128
+#define CHUNK_KEY_SIZE (FILE_CHUNK_SIZE + 1 + (2 * sizeof(u32)))
+#define FSVERITY_MAX_DIGEST_SIZE 64
+#define RINGBUF_SIZE (1 << 24)
+
+// bitmask sizes
+#define BITMASK_WORDS 2
+#define BITMASK_BITS_PER_WORD 32
+
+// Define the maximum number of extensions and maximum extension length
+#define MAX_EXTENSIONS 50
+#define MAX_EXTENSION_LENGTH 16
+#define MAX_PROCESS_NAMES 50    
+#define MAX_PROCESS_NAME_LENGTH 16
+
+// codes
 #define INPUT_PATH_MAX 1024
 #define EPERM 1
 #define MAY_READ		0x00000004
@@ -26,6 +46,7 @@ const volatile int pid_target = 0; // Volatile constant for the target PID; if 0
 #define PTRACE_MODE_FSCREDS 0x08  /* 8  */
 #define PTRACE_MODE_REALCREDS 0x10 /* 16 */
 
+// violation types
 #define VIOL_TRUSTED 2
 #define VIOL_RESTRICTED 3
 #define VIOL_EXECUTE 4
@@ -57,7 +78,9 @@ const volatile int pid_target = 0; // Volatile constant for the target PID; if 0
 #define TEMP_FILEPATH_TASK_EXE_FALLBACK 8
 #define TEMP_FILEPATH_OPENAT_EXE_FALLBACK 9
 #define TEMP_FILEPATH_MMAP_FILE 10
+#define TEMP_FILEPATH_TASK_CWD 11
 
+// Index's for container path temp map
 #define TEMP_CONTAINER_PATH_TRUSTED_EXECUTABLE 0
 #define TEMP_CONTAINER_PATH_RESTRICTED_FILEPATH 1
 #define TEMP_CONTAINER_PATH_EXEC_FALLBACK 2
@@ -65,17 +88,10 @@ const volatile int pid_target = 0; // Volatile constant for the target PID; if 0
 #define TEMP_CONTAINER_PATH_ALLOWED_PTRACE_EXECUTABLE 4
 #define TEMP_CONTAINER_PATH_FSVERITY 5
 #define TEMP_CONTAINER_PATH_ALLOWED_BPF_OPS_EXECUTABLE 6
-#define TEMP_FILEPATH_TASK_CWD 10
 
 // Index's for file_info temp map
 #define TEMP_FILE_INFO_FILE_OPEN 0
 #define TEMP_FILE_INFO_BPRM_CHECK 1
-
-// Define the maximum number of extensions and maximum extension length
-#define MAX_EXTENSIONS 50
-#define MAX_EXTENSION_LENGTH 16
-#define MAX_PROCESS_NAMES 50
-#define MAX_PROCESS_NAME_LENGTH 16
 
 // Capture one extra argv slot so we can observe the NULL terminator for exact-match policies.
 #define MAX_EXACT_ARGS 64
@@ -121,10 +137,7 @@ const volatile int pid_target = 0; // Volatile constant for the target PID; if 0
 
 #define INVALID_CGROUP_ID 0xFFFFFFFFFFFFFFFF
 #define INVALID_MNT_NS_ID 0
-
-#define RINGBUF_SIZE (1 << 24)
-#define BITMASK_WORDS 2
-#define BITMASK_BITS_PER_WORD 32
+#define INVALID_ACCESS_INDEX ((__u32)-1)
 
 #define INODE_POLICY_CACHE_NO_POLICY 0
 #define INODE_POLICY_CACHE_ACCESS_INDEX 1
@@ -146,6 +159,7 @@ struct process_id {
 
 struct file_info {
     char filename[INPUT_PATH_MAX];
+    u32 filepath_length;
     struct process_id process;
     u32 open_mode;
     char exepath[INPUT_PATH_MAX];
@@ -169,6 +183,11 @@ struct inode_cache_key {
     u64 mntns_id;
     u64 mount_id;
     u64 inode;
+};
+
+struct lpm_key {
+    u32 length;
+    char data[CHUNK_KEY_SIZE];
 };
 
 struct inode_policy_cache_value {
@@ -203,15 +222,10 @@ struct execve_event_t {
     char envp[MAX_ARGS][MAX_ARG_LEN]; // Environment variables plus one extra slot
 };
 
-struct path_check_ctx {
-    const char *filename;
-    int open_mode;
-    struct access_control access;
-    bool should_block;
-    bool found_policy;
-    bool found_global_read_only;
-    u32 matched_access_index;
-    u32 policy_id;
+struct can_access_result {
+    bool can_access;
+    u32 access_index;
+    u32 access_type;
 };
 
 struct path_container_id_component_ctx {
@@ -256,14 +270,35 @@ struct container_context {
 };
 
 struct fsverity_digest_bpf {
-    __u16 digest_algorithm;
-    __u16 digest_size;
-    __u8  digest[FSVERITY_MAX_DIGEST_SIZE];
+    u16 digest_algorithm;
+    u16 digest_size;
+    u8  digest[FSVERITY_MAX_DIGEST_SIZE];
+};
+
+struct chunk_id {
+    u32 chunk_id;
+    /*
+       The matching policy id is quite confusing to understand, but it is necessary.
+       Essentially it exists to tell us if any policy exists that would be active for this exact chunk.
+       The reason we have this is to deal with cases like the following:
+       
+       we have two polices and a chunk size of 5 chars 
+       - policy 1: /cha
+       - policy 2: /char/extra
+
+       and the file being opend is /char/bar.text
+       
+       The code would normally get the chunk id for /char as 1, and the lpm lookup would be 1 + /bar.t 
+       Now this is bad, becasue we wont match the policy 2, but we should match policy 1 which we wont either.
+
+       The solution is to have the matching access index, which will be the best access index for a chunk.
+    */
+    u32 matching_access_index;
 };
 
 struct fsverity_allowlist_key {
-    __u16 alg;
-    __u8  digest[FSVERITY_MAX_DIGEST_SIZE];
+    u16 alg;
+    u8  digest[FSVERITY_MAX_DIGEST_SIZE];
 };
 
 extern int bpf_get_fsverity_digest(struct file *file, struct bpf_dynptr *digest_p) __ksym __weak;
@@ -414,13 +449,6 @@ struct {
 
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(max_entries, 100);
-    __type(key, struct path_key);
-    __type(value, u32);
-} bomfather_global_read_only SEC(".maps");
-
-struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 1024);
     __type(key, struct path_key);
     __type(value, struct fsverity_allowlist_key);
@@ -453,6 +481,39 @@ struct {
     __type(key, struct python_identifier);  // python identifier
     __type(value, struct access_control);
 } bomfather_python_identifier_id SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_LPM_TRIE);
+	__uint(max_entries, 100);
+	__type(key, struct lpm_key);
+	__type(value, u32);
+	__uint(map_flags, BPF_F_NO_PREALLOC);
+} bomfather_restricted_executable SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 1000);
+    // Store the policy id and the previous chunk id in the key.
+    __type(key, char[CHUNK_KEY_SIZE]);
+    __type(value, struct chunk_id);
+} bomfather_restricted_executable_chunk_to_id SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_LPM_TRIE);
+    __uint(max_entries, 100);
+    __type(key, struct lpm_key);
+    __type(value, u32);
+    __uint(map_flags, BPF_F_NO_PREALLOC);
+} bomfather_global_read_only SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 1000);
+    // Store the policy id and the previous chunk id in the key.
+    __type(key, char[CHUNK_KEY_SIZE]);
+    __type(value, struct chunk_id);
+} bomfather_global_read_only_chunk_to_id SEC(".maps");
+
 
 // ----------------- Config map for runtime flags -----------------
 // Single boolean: true = enable printk debug, false = disable
@@ -545,7 +606,7 @@ struct {
 
 struct {
     __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
-    __uint(max_entries, 11);
+    __uint(max_entries, 12);
     __type(key, u32);
     __type(value, char[INPUT_PATH_MAX]);
 } bomfather_temp_filename_map SEC(".maps");
@@ -571,6 +632,20 @@ struct {
     __type(key, u32);
     __type(value, struct fsverity_digest_bpf);
 } bomfather_fsverity_scratch SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, u32);
+    __type(value, struct lpm_key);
+} bomfather_temp_lpm_key_buffer SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, u32);
+    __type(value, char[CHUNK_KEY_SIZE]);
+} bomfather_temp_chunk_buffer SEC(".maps");
 
 // ----------------- TASK STORAGE MAP -----------------
 struct {
@@ -940,18 +1015,19 @@ static __always_inline void get_process_id(struct process_id *process) {
     get_process_id_from_task(task, process);
 }
 
-static __always_inline void get_filename(struct file *file, struct dentry *dentry, char *buf, size_t size) {
+static __always_inline u32 get_filename(struct file *file, struct dentry *dentry, char *buf, size_t size) {
     // Try to get the full path using get_path_str from path.h
     char *path_str = get_path_str(&file->f_path);
     if (path_str) {
-        bpf_probe_read_kernel_str(buf, size, path_str);
-        return;
+        u32 length = bpf_probe_read_kernel_str(buf, size, path_str);
+        return length - 1; // we subtract 1 to remove the trailing null byte
     }
 
     __builtin_memcpy(buf, "unknown", sizeof("unknown"));
+    return 0;
 }
 
-static __always_inline char *get_filename_from_path(struct path *path, u32 temp_map_index) {
+static __always_inline char *get_filename_from_path(struct path *path, u32 temp_map_index, u32 *length_ptr) {
     char *key = bpf_map_lookup_elem(&bomfather_temp_filename_map, &temp_map_index);
     if (!key) {
         return NULL;
@@ -959,8 +1035,14 @@ static __always_inline char *get_filename_from_path(struct path *path, u32 temp_
     __builtin_memset(key, 0, INPUT_PATH_MAX);
     char *path_str = get_path_str(path);
     if (path_str) {
-        bpf_probe_read_kernel_str(key, INPUT_PATH_MAX, path_str);
+        u32 length = (u32)bpf_probe_read_kernel_str(key, INPUT_PATH_MAX, path_str);
+        if (length_ptr) {
+            *length_ptr = length - 1;
+        }
         return key;
+    }
+    if (length_ptr) {
+        *length_ptr = 0;
     }
     __builtin_memcpy(key, "unknown", sizeof("unknown"));
     return key;
@@ -1063,7 +1145,7 @@ static int push_violation(char *output_buffer, int type, struct process_id *proc
     if (task) {
         struct file *exe_file = BPF_CORE_READ(task, mm, exe_file);
         if (exe_file) {
-            char *exe_path = get_filename_from_path(&exe_file->f_path, TEMP_FILEPATH_TASK_EXE_FALLBACK);
+            char *exe_path = get_filename_from_path(&exe_file->f_path, TEMP_FILEPATH_TASK_EXE_FALLBACK, NULL);
             if (exe_path) {
                 bpf_probe_read_kernel_str(v->exepath, sizeof(v->exepath), exe_path);
             }
@@ -1200,12 +1282,6 @@ static bool should_protect_process(struct task_struct *task) {
     return false;
 }
 
-static bool is_trusted_executable(const char *filename) {
-    struct path_key *pkey = make_path_key_from_current_mnt_ns(filename, TEMP_CONTAINER_PATH_TRUSTED_EXECUTABLE);
-    if (!pkey) return false;
-    u8 *trusted = bpf_map_lookup_elem(&bomfather_trusted_executables, pkey);
-    return trusted != NULL;
-}
 
 // This is used to make a path key from a given policy id and directory path.
 // It is used to make a path key for the trusted executables map and the global read only map.
@@ -1265,88 +1341,6 @@ static long mount_check_callback(u64 index, void *ctx) {
     return 0;
 }
 
-static long path_check_callback(u64 index, void *ctx) {
-    struct path_check_ctx *pctx = (struct path_check_ctx *)ctx;
-
-    if (index >= INPUT_PATH_MAX - 1) return 1;
-
-    int i = (INPUT_PATH_MAX - 2) - (int)index;
-
-    if (i < 0 || i >= INPUT_PATH_MAX) return 1;
-
-    char c;
-    if (bpf_probe_read_kernel(&c, 1, &pctx->filename[i]) != 0) {
-       return 1;
-    }
-
-    if (c == '/' || i == INPUT_PATH_MAX - 2) {
-        u32 temp_map_index = TEMP_FILEPATH_PATH_CHECK;
-        char *key = bpf_map_lookup_elem(&bomfather_temp_filename_map, &temp_map_index);
-        if (!key) {
-            return 1;
-        }
-        __builtin_memset(key, 0, INPUT_PATH_MAX);
-
-        bpf_probe_read_kernel_str(key, i + 1 , pctx->filename);
-
-        struct path_key *pkey = make_path_key(
-            pctx->policy_id,
-            key,
-            TEMP_CONTAINER_PATH_RESTRICTED_FILEPATH
-        );
-        if (!pkey) {
-            return 1;
-        }
-
-        u32 *access_index = bpf_map_lookup_elem(&bomfather_dir_to_id, pkey);
-        if (access_index != NULL) {
-            u32 *global_read_only_index = bpf_map_lookup_elem(&bomfather_global_read_only, pkey);
-            if (!pctx->found_policy) {
-                pctx->found_policy = true;
-                pctx->matched_access_index = *access_index;
-                pctx->found_global_read_only = global_read_only_index != NULL;
-            }
-
-            // Check write access
-            if (pctx->open_mode == ACCESS_WRITE && bitmask_has_id(&pctx->access.write, *access_index)) {
-                pctx->should_block = false;
-                return 1;
-            }
-            // Check read access
-            if (pctx->open_mode == ACCESS_READ &&
-                (bitmask_has_id(&pctx->access.read, *access_index) || bitmask_has_id(&pctx->access.write, *access_index))) {
-                pctx->should_block = false;
-                return 1;
-            } else {
-                // if this directory is a global read only directory, then we allow read access,
-                // even if their is a rule around it that blocks read access, since the global read map allows it.
-                if (global_read_only_index != NULL && pctx->open_mode == ACCESS_READ) {
-                    pctx->should_block = false;
-                    return 1;
-                }
-            }
-            // No access at this level, mark as blocked.
-            // We do not return 1 here, since we want to continue checking parent directories.
-            pctx->should_block = true;
-        } else {
-            // Only if there are no rules on this directory, we check if it is an immutable directory.
-            u32 *global_read_only_index = bpf_map_lookup_elem(&bomfather_global_read_only, pkey);
-            if (global_read_only_index != NULL) {
-                if (!pctx->found_policy) {
-                    pctx->found_policy = true;
-                    pctx->matched_access_index = 0;
-                    pctx->found_global_read_only = true;
-                }
-
-                if (pctx->open_mode == ACCESS_WRITE) {
-                    pctx->should_block = true;
-                }
-            }
-        }
-    }
-    return 0;
-}
-
 // This is used for processes that were already running (like runc) and never went through execve.
 // Returning the map value pointer avoids copying a full access_control onto the BPF stack.
 static __always_inline struct access_control *get_exe_access_fallback_ptr(struct task_struct *task) {
@@ -1355,7 +1349,7 @@ static __always_inline struct access_control *get_exe_access_fallback_ptr(struct
         return NULL;
     }
 
-    char *exe_path = get_filename_from_path(&exe_file->f_path, TEMP_FILEPATH_TASK_EXEC_FALLBACK);
+    char *exe_path = get_filename_from_path(&exe_file->f_path, TEMP_FILEPATH_TASK_EXEC_FALLBACK, NULL);
     if (!exe_path) {
         return NULL;
     }
@@ -1465,7 +1459,7 @@ static __always_inline bool allow_procstat_ptrace(struct task_struct *child, uns
 
     bool ok = tctx && tctx->procstat_gate && (BPF_CORE_READ(child, pid) == tctx->procstat_pid) && (mode & PTRACE_MODE_READ) && !(mode & PTRACE_MODE_ATTACH);
 
-    /* consume one-shot token no matter what */
+    // consume one-shot token no matter what 
     if (tctx) {
         tctx->procstat_gate = 0;
         tctx->procstat_pid  = 0;
@@ -1473,93 +1467,258 @@ static __always_inline bool allow_procstat_ptrace(struct task_struct *child, uns
     return ok;
 }
 
-static bool is_restricted_filepath(const char *filename, int open_mode, struct inode_cache_key *inode_key) {
+// ----------------- Access Policy Enforcement -----------------
+
+// enforce_access_policy helper functions
+static __always_inline bool is_trusted_executable(const char *filename);
+static __always_inline struct can_access_result can_access_path(const char *filename, int length, int open_mode);
+static __always_inline void update_inode_cache(struct inode_cache_key *inode_key, int type, u32 access_index);
+
+static __always_inline int enforce_access_policy(int open_mode, char *filename, struct process_id *process_id, u32 filename_length, struct inode_cache_key *inode_key) {
+    if (open_mode == ACCESS_WRITE && is_trusted_executable(filename)) {
+        update_inode_cache(inode_key, INODE_POLICY_CACHE_NO_POLICY, 0);
+        push_violation(filename, VIOL_TRUSTED, process_id);
+        return return_value();
+    }
+
+   struct can_access_result access_result = can_access_path(filename, filename_length, open_mode);
+   update_inode_cache(inode_key, access_result.access_type, access_result.access_index);
+
+   if (access_result.can_access == false) {
+       push_violation(filename, VIOL_RESTRICTED, process_id);
+       return return_value();
+   }
+   return 0;
+}
+
+static __always_inline bool is_trusted_executable(const char *filename) {
+    struct path_key *pkey = make_path_key_from_current_mnt_ns(filename, TEMP_CONTAINER_PATH_TRUSTED_EXECUTABLE);
+    if (!pkey) return false;
+    u8 *trusted = bpf_map_lookup_elem(&bomfather_trusted_executables, pkey);
+    return trusted != NULL;
+}
+
+static __always_inline void update_inode_cache(struct inode_cache_key *inode_key, int type, u32 access_index) {
+    if (inode_key) {
+        struct inode_policy_cache_value cache_value = {};
+        if (type == INODE_POLICY_CACHE_NO_POLICY) {
+            cache_value.state = INODE_POLICY_CACHE_NO_POLICY;
+        } else if (type == INODE_POLICY_CACHE_GLOBAL_READ_ONLY) {
+            cache_value.state = INODE_POLICY_CACHE_GLOBAL_READ_ONLY;
+        } else {
+            cache_value.state = type;
+            cache_value.access_index = access_index;
+        }
+        bpf_map_update_elem(&bomfather_inode_policy_cache, inode_key, &cache_value, BPF_ANY);
+        inode_cache_stats_inc(INODE_CACHE_STATS_FILLS);
+    }
+}
+
+// can_access_path helper functions
+static u32 get_access_index_for_filepath(const char *filename, int length, u32 policy_id, u32 map_type);
+static bool copy_chunk_to_buffer(char *buffer, const char *filename, int offset, int chunk_index);
+static __always_inline bool task_has_access_for_mode(u32 *access_index, int open_mode, struct access_control *access);
+static __always_inline struct can_access_result allow_access(u32 access_type, u32 access_index);
+static __always_inline struct can_access_result deny_access(u32 access_type, u32 access_index);
+
+static __always_inline struct can_access_result can_access_path(const char *filename, int length, int open_mode) {
     struct task_struct *task = bpf_get_current_task_btf();
     struct task_ctx *task_ctx = get_task_ctx_safe(task);
+
+    if (!task_ctx) {
+        return allow_access(INODE_POLICY_CACHE_NO_POLICY, 0);
+    }
 
     // Lookup policy_id for current mount namespace (defaults to 0 for unmapped host)
     u32 *policy_id_ptr = get_policy_id_for_current_mnt_ns();
     u32 policy_id = (policy_id_ptr != NULL) ? *policy_id_ptr : 0;
 
-    // Set up context for bpf_loop
-    struct path_check_ctx ctx = {
-        .filename = filename,
-        .policy_id = policy_id,
-        .open_mode = open_mode,
-        .should_block = false,
-    };
-    if (task_ctx) {
-        ctx.access = task_ctx->access;
+    u32 access_index = get_access_index_for_filepath(filename, length, policy_id, BOMFATHER_RESTRICTED_EXECUTABLE_CHUNK_TO_ID);
+    if (access_index != INVALID_ACCESS_INDEX) {
+        // if an access index exists, we either have access or not, this overrides global read only rules.
+        if (task_has_access_for_mode(&access_index, open_mode, &task_ctx->access)) {
+            return allow_access(INODE_POLICY_CACHE_ACCESS_INDEX, access_index);
+        } 
+        return deny_access(INODE_POLICY_CACHE_ACCESS_INDEX, access_index);
     }
 
-    // Use bpf_loop to iterate through path components
-    bpf_loop(INPUT_PATH_MAX - 1, path_check_callback, &ctx, 0);
-
-    // writing the inode cache value
-    if (inode_key) {
-        struct inode_policy_cache_value cache_value = {};
-        if (ctx.found_policy) {
-            if (ctx.matched_access_index != 0 && ctx.found_global_read_only) {
-                cache_value.state = INODE_POLICY_CACHE_ACCESS_INDEX_AND_GLOBAL_RO;
-                cache_value.access_index = ctx.matched_access_index;
-            } else if (ctx.matched_access_index != 0) {
-                cache_value.state = INODE_POLICY_CACHE_ACCESS_INDEX;
-                cache_value.access_index = ctx.matched_access_index;
-            } else if (ctx.found_global_read_only) {
-                cache_value.state = INODE_POLICY_CACHE_GLOBAL_READ_ONLY;
-            } else {
-                cache_value.state = INODE_POLICY_CACHE_NO_POLICY;
-            }
-        } else {
-            cache_value.state = INODE_POLICY_CACHE_NO_POLICY;
+    u32 global_read_only_access_index = get_access_index_for_filepath(filename, length, policy_id, BOMFATHER_GLOBAL_READ_ONLY_CHUNK_TO_ID);
+    
+    // if the path is a global read only path, block all writes, and allow all reads.
+    if (global_read_only_access_index != INVALID_ACCESS_INDEX) {
+        if (open_mode == ACCESS_WRITE) {
+            return deny_access(INODE_POLICY_CACHE_GLOBAL_READ_ONLY, 0);
+        } else if (open_mode == ACCESS_READ) {
+            return allow_access(INODE_POLICY_CACHE_GLOBAL_READ_ONLY, 0);
         }
-        bpf_map_update_elem(&bomfather_inode_policy_cache, inode_key, &cache_value, BPF_ANY);
-        inode_cache_stats_inc(INODE_CACHE_STATS_FILLS);
     }
-
-    return ctx.should_block;
+    return allow_access(INODE_CACHE_STATS_HITS_NO_POLICY, 0);
 }
 
-static __always_inline bool task_has_access_for_mode(u32 access_index, int open_mode) {
-    struct task_struct *task = bpf_get_current_task_btf();
-    if (!task) {
-        return false;
-    }
+static __always_inline struct can_access_result allow_access(u32 access_type, u32 access_index) {
+    return (struct can_access_result){ .can_access = true, .access_type = access_type, .access_index = access_index };
+}
 
-    struct task_ctx *task_ctx = get_task_ctx_safe(task);
-    if (!task_ctx) {
+static __always_inline struct can_access_result deny_access(u32 access_type, u32 access_index) {
+    return (struct can_access_result){ .can_access = false, .access_type = access_type, .access_index = access_index };
+}
+
+static __always_inline bool task_has_access_for_mode(u32 *access_index, int open_mode, struct access_control *access) {
+    if (access_index == NULL) {
+        return true;
+    }
+    if (access == NULL) {
         return false;
     }
 
     if (open_mode == ACCESS_WRITE) {
-        return bitmask_has_id(&task_ctx->access.write, access_index);
+        return bitmask_has_id(&access->write, *access_index);
     }
 
     if (open_mode == ACCESS_READ) {
-        return bitmask_has_id(&task_ctx->access.read, access_index) ||
-               bitmask_has_id(&task_ctx->access.write, access_index);
+        return bitmask_has_id(&access->read, *access_index) ||
+               bitmask_has_id(&access->write, *access_index);
     }
 
     return false;
 }
 
-static __always_inline int enforce_restricted_filepath_policy(int open_mode, char *filename, struct process_id *process_id, struct inode_cache_key *inode_key) {
-    if (is_restricted_filepath(filename, open_mode, inode_key)) {
-        push_violation(filename, VIOL_RESTRICTED, process_id);
-        return return_value();
-    }
+static u32 create_and_query_lpm(u32 chunk_index, int length, u32 policy_id, u32 file_chunk_id, u32 longest_matching_access_index, const char *filename, u32 map_type);
 
-    return 0;
+/*
+    We are iterating through the file path, and if it is greater than the file chunk size, we take that chunk
+    hit a map, to get an id for the chunk, allowing us to represnt all those bytes with a single id.
+    If we reach a second chunk (this means the file path is greater than FILE_CHUNK_SIZE * 2), 
+    we pre append the previous file chunk id to the current chunk, so that we can represent the 
+    current and previous chunk bytes and we hit the same chunk map to get a new id for the current chunk.
+
+    We do all of this because the lpm map is limited to 256 bytes, so we need to represent a prefix in 256 bytes, 
+    but our paths can be longer than that. These id's allow us to guarantee that the current chunk of 
+    text that is send to the lpm, also had some unique preivous text, essentially attesting the entire filepath 
+    did exist before this chunk, as a single integer id. 
+*/
+static u32 get_access_index_for_filepath(const char *filename, int length, u32 policy_id, u32 map_type) {
+    u32 zero = 0;
+    u32 file_chunk_id = 0;
+    u32 chunk_index = 0;
+    u32 longest_matching_access_index = INVALID_ACCESS_INDEX;
+    #pragma unroll
+    for (; chunk_index < INPUT_PATH_MAX / FILE_CHUNK_SIZE; chunk_index++) {
+        u32 chunk_offset = chunk_index * FILE_CHUNK_SIZE;
+        if (chunk_offset >= length) {
+            break;
+        }
+
+        // zero initialize the chunk
+        char *chunk = bpf_map_lookup_elem(&bomfather_temp_chunk_buffer, &zero);
+        if (!chunk) {
+            return INVALID_ACCESS_INDEX;
+        }
+        __builtin_memset(chunk, 0, CHUNK_KEY_SIZE);
+        __builtin_memcpy(&chunk[0], &policy_id, sizeof(policy_id));
+        __builtin_memcpy(&chunk[sizeof(policy_id)], &file_chunk_id, sizeof(file_chunk_id));
+        copy_chunk_to_buffer(chunk + (2 * sizeof(u32)), filename, chunk_offset, chunk_index);
+
+        // Defensive stop for malformed or unexpectedly empty chunk data.
+        if (chunk[2 * sizeof(u32)] == '\0') {
+            break;
+        }
+
+        /*
+            This means we are at the last registered chunk, so we can't add more chunks to the lpm key. 
+            We break even though we have not iterated through the whole path, because at this point it doesnt matter,
+            if we have already hit the last possible chunk we have registered, everything after this point is irrelveant, 
+            since we already know its will match to one of the chunks, and adding more text won't help us find a match.
+        */
+        struct chunk_id *id = NULL;
+        if (map_type == BOMFATHER_RESTRICTED_EXECUTABLE_CHUNK_TO_ID) {
+            id = bpf_map_lookup_elem(&bomfather_restricted_executable_chunk_to_id, chunk);
+        } else if (map_type == BOMFATHER_GLOBAL_READ_ONLY_CHUNK_TO_ID) {
+            id = bpf_map_lookup_elem(&bomfather_global_read_only_chunk_to_id, chunk);
+        }
+
+        if (!id || id->chunk_id == 0) {
+            break;
+        }
+
+        // this means we have a deeper matching index for this chunk 
+        // refer to the struct 'chunk_id' on what the matching access index is for.
+        if (id->matching_access_index != INVALID_ACCESS_INDEX) { 
+            longest_matching_access_index = id->matching_access_index;
+        }
+        file_chunk_id = id->chunk_id;
+    }
+    return create_and_query_lpm(chunk_index, length, policy_id, file_chunk_id, longest_matching_access_index, filename, map_type); 
 }
 
-static __inline int enforce_access_policy(int open_mode, char *filename, struct process_id *process_id) {
-    // keep the access mode check first for perf optimization
-    if (open_mode == ACCESS_WRITE && is_trusted_executable(filename)) {
-        push_violation(filename, VIOL_TRUSTED, process_id);
-        return return_value();
-    }
+static u32 create_and_query_lpm(u32 chunk_index, int length, u32 policy_id, u32 file_chunk_id, u32 longest_matching_access_index, const char *filename, u32 map_type) {
+    u32 zero = 0; 
+    // we are creating the lpm key from the current file chunk, the previous file chunk id and the policy id.
+     u32 input_path_offset = chunk_index * FILE_CHUNK_SIZE;
+     u32 input_path_len = 0;
+     if (input_path_offset < length) {
+         input_path_len = length - input_path_offset;
+         if (input_path_len > FILE_CHUNK_SIZE) {
+             input_path_len = FILE_CHUNK_SIZE;
+         }
+     }
+ 
+     struct lpm_key *key = bpf_map_lookup_elem(&bomfather_temp_lpm_key_buffer, &zero);
+     if (!key) {
+        // If we can't find a key, and a longest matching access index exists, we return that.
+        return longest_matching_access_index;
+     }
+     __builtin_memset(key->data, 0, sizeof(key->data));
+     key->length = (input_path_len + (2 * sizeof(u32))) * 8;
+     __builtin_memcpy(&key->data[0], &policy_id, sizeof(policy_id));
+     __builtin_memcpy(&key->data[sizeof(policy_id)], &file_chunk_id, sizeof(file_chunk_id));
+     if (input_path_len > 0) {
+         copy_chunk_to_buffer(key->data + (2 * sizeof(u32)), filename, input_path_offset, chunk_index);  
+     }
+ 
+      // and then hit the lpm with the chunks length 
+      u32 *access_index = NULL;
+      if (map_type == BOMFATHER_RESTRICTED_EXECUTABLE_CHUNK_TO_ID) {
+          access_index = bpf_map_lookup_elem(&bomfather_restricted_executable, key);
+      } else if (map_type == BOMFATHER_GLOBAL_READ_ONLY_CHUNK_TO_ID) {
+          access_index = bpf_map_lookup_elem(&bomfather_global_read_only, key);
+      }
+     if (!access_index) {
+         return longest_matching_access_index;
+     }
+     return *access_index;
+}
 
-    return enforce_restricted_filepath_policy(open_mode, filename, process_id, NULL);
+static bool copy_chunk_to_buffer(char *buffer, const char *filename, int offset, int chunk_index) {
+    switch (chunk_index) {
+        case 0:
+            __builtin_memcpy(buffer, filename, FILE_CHUNK_SIZE);
+            break;
+        case 1:
+            __builtin_memcpy(buffer, filename + FILE_CHUNK_SIZE, FILE_CHUNK_SIZE);
+            break;
+        case 2:
+            __builtin_memcpy(buffer, filename + (2 * FILE_CHUNK_SIZE), FILE_CHUNK_SIZE);
+            break;
+        case 3:
+            __builtin_memcpy(buffer, filename + (3 * FILE_CHUNK_SIZE), FILE_CHUNK_SIZE);
+            break;
+        case 4:
+            __builtin_memcpy(buffer, filename + (4 * FILE_CHUNK_SIZE), FILE_CHUNK_SIZE);
+            break;
+        case 5:
+            __builtin_memcpy(buffer, filename + (5 * FILE_CHUNK_SIZE), FILE_CHUNK_SIZE);
+            break;
+        case 6:
+            __builtin_memcpy(buffer, filename + (6 * FILE_CHUNK_SIZE), FILE_CHUNK_SIZE);
+            break;
+        case 7:
+            __builtin_memcpy(buffer, filename + (7 * FILE_CHUNK_SIZE), FILE_CHUNK_SIZE);
+            break;
+        default:
+            return false;
+    }
+    return true;
 }
 
 // ----------------- CGROUP TRACER FUNCTIONS -----------------
@@ -1942,11 +2101,9 @@ int BPF_PROG(lsm_file_open, struct file *file) {
 
     __builtin_memset(file_info->filename, 0, sizeof(file_info->filename));
 
-    get_filename(file, dentry, file_info->filename, sizeof(file_info->filename));
-
+    u32 length = get_filename(file, dentry, file_info->filename, sizeof(file_info->filename));
+    file_info->filepath_length = length;
     file_info->open_mode = open_mode;
-
-    //bpf_map_update_elem(&bomfather_file_info_map, &temp_map_index, file_info, BPF_ANY);
 
     //skip gpu check tail call if restrict_gpu_access is enabled or not
     u32 *restrict_gpu = bpf_map_lookup_elem(&bomfather_restrict_gpu_access, &zero);
@@ -2010,6 +2167,11 @@ int BPF_PROG(tail_call_security_check, struct file *file) {
         return 0;
     }
 
+    struct task_ctx *task_ctx = get_task_ctx_safe(bpf_get_current_task_btf());
+    if (!task_ctx) {
+        return return_value();
+    }
+
     inode_key_ready = build_inode_cache_key(file, inode, &inode_key);
     if (inode_key_ready) {
         inode_cache_stats_inc(INODE_CACHE_STATS_LOOKUPS);
@@ -2030,7 +2192,7 @@ int BPF_PROG(tail_call_security_check, struct file *file) {
             skip_restricted_filepath_check = true;
         }
         if (inode_policy_cache_entry->state == INODE_POLICY_CACHE_ACCESS_INDEX) {
-            if (task_has_access_for_mode(inode_policy_cache_entry->access_index, file_info->open_mode)) {
+            if (task_has_access_for_mode(&inode_policy_cache_entry->access_index, file_info->open_mode, &task_ctx->access)) {
                 inode_cache_stats_inc(INODE_CACHE_STATS_HITS_ALLOW);
                 skip_restricted_filepath_check = true;
             } else {
@@ -2050,7 +2212,7 @@ int BPF_PROG(tail_call_security_check, struct file *file) {
             }
         }
         if (inode_policy_cache_entry->state == INODE_POLICY_CACHE_ACCESS_INDEX_AND_GLOBAL_RO) {
-            if (task_has_access_for_mode(inode_policy_cache_entry->access_index, file_info->open_mode)) {
+            if (task_has_access_for_mode(&inode_policy_cache_entry->access_index, file_info->open_mode, &task_ctx->access)) {
                 inode_cache_stats_inc(INODE_CACHE_STATS_HITS_ALLOW);
                 skip_restricted_filepath_check = true;
             } else if (file_info->open_mode == ACCESS_READ) {
@@ -2070,7 +2232,7 @@ int BPF_PROG(tail_call_security_check, struct file *file) {
             inode_cache_stats_inc(INODE_CACHE_STATS_MISSES_WALK);
         }
         struct inode_cache_key *cache_key_for_write = inode_key_ready ? &inode_key : NULL;
-        int ret = enforce_restricted_filepath_policy(file_info->open_mode, file_info->filename, NULL, cache_key_for_write);
+        int ret = enforce_access_policy(file_info->open_mode, file_info->filename, &file_info->process, file_info->filepath_length, cache_key_for_write);
         if (ret != 0) {
             return ret;
         }
@@ -2143,7 +2305,7 @@ int BPF_PROG(tail_call_send_data, struct file *file) {
     if (!has_exepath) {
         struct file *exe_file = BPF_CORE_READ(task, mm, exe_file);
         if (exe_file) {
-            char *exe_path = get_filename_from_path(&exe_file->f_path, TEMP_FILEPATH_OPENAT_EXE_FALLBACK);
+            char *exe_path = get_filename_from_path(&exe_file->f_path, TEMP_FILEPATH_OPENAT_EXE_FALLBACK, NULL);
             if (exe_path) {
                 __builtin_memcpy(event->exepath, exe_path, sizeof(event->exepath));
             }
@@ -2161,31 +2323,41 @@ int BPF_PROG(tail_call_send_data, struct file *file) {
 SEC("lsm/path_rename")
 int BPF_PROG(lsm_path_rename, struct path *old_dir, struct dentry *old_dentry, struct path *new_dir, struct dentry *new_dentry) {
     struct path p = {.mnt = BPF_CORE_READ(old_dir, mnt), .dentry = old_dentry}; // we copy since in this hook the path struct in the arguments is not properly populated
-    char *old_path_str = get_filename_from_path(&p, TEMP_FILEPATH_PATH_RENAME_OLD);
+    u32 old_length = 0;
+    char *old_path_str = get_filename_from_path(&p, TEMP_FILEPATH_PATH_RENAME_OLD, &old_length);
     if (!old_path_str) {
         return 0;
     }
     p.mnt = BPF_CORE_READ(new_dir, mnt);
     p.dentry = new_dentry;
-    char *new_path_str = get_filename_from_path(&p, TEMP_FILEPATH_PATH_RENAME_NEW);
+    u32 new_length = 0;
+    char *new_path_str = get_filename_from_path(&p, TEMP_FILEPATH_PATH_RENAME_NEW, &new_length);
     if (!new_path_str) {
         return 0;
     }
 
-    if (enforce_access_policy(ACCESS_WRITE, old_path_str, NULL) != 0) {
+    struct process_id process_id = {0};
+    get_process_id(&process_id);
+
+    if (enforce_access_policy(ACCESS_WRITE, old_path_str, &process_id, old_length, NULL) != 0) {
         return return_value();
     }
-    return enforce_access_policy(ACCESS_WRITE, new_path_str, NULL);
+    return enforce_access_policy(ACCESS_WRITE, new_path_str, &process_id, new_length, NULL);
 }
 
 SEC("lsm/path_unlink")
 int BPF_PROG(lsm_path_unlink, struct path *dir, struct dentry *dentry) {
     struct path p = {.mnt = BPF_CORE_READ(dir, mnt), .dentry = dentry};// we copy since in this hook the path struct in the arguments is not properly populated
-    char *path_str = get_filename_from_path(&p, TEMP_FILEPATH_PATH_UNLINK);
+    u32 length = 0;
+    char *path_str = get_filename_from_path(&p, TEMP_FILEPATH_PATH_UNLINK, &length);
     if (!path_str) {
         return 0;
     }
-    return enforce_access_policy(ACCESS_WRITE, path_str, NULL);
+
+    struct process_id process_id = {0};
+    get_process_id(&process_id);
+
+    return enforce_access_policy(ACCESS_WRITE, path_str, &process_id, length, NULL);
 }
 
 SEC("lsm/path_rmdir")
@@ -2198,12 +2370,16 @@ int BPF_PROG(lsm_path_rmdir, struct path *dir, struct dentry *dentry) {
     }
 
     p.dentry = dentry;
-
-    char *path_str = get_filename_from_path(&p, TEMP_FILEPATH_PATH_RMDIR);
+    u32 length = 0; 
+    char *path_str = get_filename_from_path(&p, TEMP_FILEPATH_PATH_RMDIR, &length);
     if (!path_str) {
         return 0;
     }
-    return enforce_access_policy(ACCESS_WRITE, path_str, NULL);
+
+    struct process_id process_id = {0};
+    get_process_id(&process_id);
+
+    return enforce_access_policy(ACCESS_WRITE, path_str, &process_id, length, NULL);
 }
 
 // ----------------- PROCESS START HOOKS -----------------
@@ -2451,7 +2627,7 @@ int BPF_PROG(lsm_bprm_check_security, struct linux_binprm *bprm, int ret){
             if (fs) {
                 struct path pwd = BPF_CORE_READ(fs, pwd);
                 if (pwd.mnt && pwd.dentry) {
-                    char *cwd = get_filename_from_path(&pwd, TEMP_FILEPATH_TASK_CWD);
+                    char *cwd = get_filename_from_path(&pwd, TEMP_FILEPATH_TASK_CWD, NULL);
                     if (cwd) {
                         // populating the python_identifier_key with the cwd
                         __builtin_memcpy(python_identifier_key->cwd, cwd, sizeof(python_identifier_key->cwd));
@@ -2558,7 +2734,7 @@ int BPF_PROG(lsm_sb_mount, const char *dev_name, struct path *path, const char *
     }
 
     // Populate the shared path buffer before the tail call.
-    if (!get_filename_from_path(path, TEMP_FILEPATH_PATH_BIND_MOUNT)) {
+    if (!get_filename_from_path(path, TEMP_FILEPATH_PATH_BIND_MOUNT, NULL)) {
         return 0;
     }
 
