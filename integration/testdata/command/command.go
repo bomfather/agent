@@ -7,6 +7,8 @@ const (
 	Read                             = "read"
 	ReadAndBlocked                   = "read-and-blocked"
 	WriteToReadonly                  = "write-to-readonly"
+	Write                            = "write"
+	WriteMustBeDenied                = "write-must-be-denied"
 	Connect                          = "connect"
 	ReadMustBeDenied                 = "read-must-be-denied"
 	ParentReadAllowedChildReadDenied = "parent-read-allowed-child-read-denied"
