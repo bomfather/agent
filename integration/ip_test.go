@@ -77,3 +77,58 @@ attributes:
 		t.Fatalf("helper should be denied connecting to %s", blockedAddr)
 	}
 }
+
+// This tests that only the executable that is allowed to access the IP can connect to it.
+func TestExclusiveIPOnlyOwnerCanConnect(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("test must be run as root")
+	}
+
+	owner := buildTestBinary(t)
+	other := buildTestBinaryAt(t)
+
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer func() { _ = ln.Close() }()
+
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+
+	addr := ln.Addr().String() // 127.0.0.1:port
+
+	// We should be able to connect because the agent hasn't been started yet
+	if err := exec.Command(owner, command.Connect, addr).Run(); err != nil {
+		t.Skipf("pre-agent owner control failed: %v", err)
+	}
+	if err := exec.Command(other, command.Connect, addr).Run(); err != nil {
+		t.Skipf("pre-agent other control failed: %v", err)
+	}
+
+	policy := fmt.Sprintf(`
+policies:
+  - executable: "filepath = %s"
+    can_run:
+      - "%s"
+    is_allowed_to_access_ip:
+      - "%s"
+`, owner, owner, addr)
+
+	runAgent(t, policy)
+
+	if err := exec.Command(owner, command.Connect, addr).Run(); err != nil {
+		t.Fatalf("owner should be allowed to connect to %s: %v", addr, err)
+	}
+
+	if err := exec.Command(other, command.Connect, addr).Run(); err == nil {
+		t.Fatalf("other executable should be denied connecting to %s", addr)
+	}
+}
