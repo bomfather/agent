@@ -1552,7 +1552,7 @@ static __always_inline struct can_access_result can_access_path(const char *file
             return allow_access(INODE_POLICY_CACHE_GLOBAL_READ_ONLY, 0);
         }
     }
-    return allow_access(INODE_CACHE_STATS_HITS_NO_POLICY, 0);
+    return allow_access(INODE_POLICY_CACHE_NO_POLICY, 0);
 }
 
 static __always_inline struct can_access_result allow_access(u32 access_type, u32 access_index) {
