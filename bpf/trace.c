@@ -1609,6 +1609,11 @@ static u32 get_access_index_for_filepath(const char *filename, int length, u32 p
             break;
         }
 
+        // If we don't have a full chunk we don't need to check the hash map
+        if ((u32)length - chunk_offset < FILE_CHUNK_SIZE) {
+            break;
+        }
+
         // zero initialize the chunk
         char *chunk = bpf_map_lookup_elem(&bomfather_temp_chunk_buffer, &zero);
         if (!chunk) {
