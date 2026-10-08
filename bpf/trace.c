@@ -2104,6 +2104,32 @@ int BPF_PROG(lsm_file_open, struct file *file) {
         open_mode = ACCESS_READ;
     }
 
+    // if this is a repeated read, check the inode cache to see if it is allowed before building the path.
+    u32 *restrict_gpu = bpf_map_lookup_elem(&bomfather_restrict_gpu_access, &zero);
+    u32 *output_openats = bpf_map_lookup_elem(&bomfather_should_output_openats, &zero);
+
+    // we only check the inode cache for repeated reads (if it is a write, we need to build the path)
+    if (open_mode == ACCESS_READ && BPF_CORE_READ(inode, i_nlink) == 1 &&
+        !(restrict_gpu && *restrict_gpu) && !(output_openats && *output_openats)) {
+        struct inode_cache_key inode_key = {};
+        struct task_ctx *task_ctx = get_task_ctx_safe(bpf_get_current_task_btf());
+
+        if (task_ctx && build_inode_cache_key(file, inode, &inode_key)) {
+            struct inode_policy_cache_value *cached = bpf_map_lookup_elem(&bomfather_inode_policy_cache, &inode_key); // look up the inode cache
+
+            if (cached && (cached->state == INODE_POLICY_CACHE_NO_POLICY ||
+                           cached->state == INODE_POLICY_CACHE_GLOBAL_READ_ONLY ||
+                           cached->state == INODE_POLICY_CACHE_ACCESS_INDEX_AND_GLOBAL_RO ||
+                           (cached->state == INODE_POLICY_CACHE_ACCESS_INDEX &&
+                            task_has_access_for_mode(&cached->access_index, ACCESS_READ, &task_ctx->access)))) {
+                u8 state = cached->state;
+                inode_cache_stats_inc(INODE_CACHE_STATS_LOOKUPS);
+                inode_cache_stats_inc(state == INODE_POLICY_CACHE_NO_POLICY ? INODE_CACHE_STATS_HITS_NO_POLICY : INODE_CACHE_STATS_HITS_ALLOW);
+                return 0; // if we have the inode cache hit, we can return early and skip building the path
+            }
+        }
+    }
+
     __builtin_memset(file_info->filename, 0, sizeof(file_info->filename));
 
     u32 length = get_filename(file, dentry, file_info->filename, sizeof(file_info->filename));
@@ -2111,7 +2137,6 @@ int BPF_PROG(lsm_file_open, struct file *file) {
     file_info->open_mode = open_mode;
 
     //skip gpu check tail call if restrict_gpu_access is enabled or not
-    u32 *restrict_gpu = bpf_map_lookup_elem(&bomfather_restrict_gpu_access, &zero);
     u32 next_tail_call = restrict_gpu && *restrict_gpu != 0 ? 0 : 1;
     bpf_tail_call(ctx, &bomfather_file_open_jump_table, next_tail_call);
 
