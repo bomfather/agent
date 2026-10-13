@@ -19,7 +19,7 @@ CI_PACKAGES := ./grpcclient ./secureshutdown ./cri
 # Pinned versions of the protoc Go plugins used by the `proto` target.
 PROTOC_GEN_GO_VERSION := v1.36.5
 PROTOC_GEN_GO_GRPC_VERSION := v1.5.1
-GOLANGCI_LINT_VERSION := v2.12.2
+GOLANGCI_LINT_VERSION := v2.14.0
 GOBIN := $(shell $(GO) env GOBIN)
 ifeq ($(GOBIN),)
 GOBIN := $(shell $(GO) env GOPATH)/bin
