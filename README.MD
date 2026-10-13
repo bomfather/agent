@@ -33,7 +33,7 @@ These points are our North Star for this entire project. All features and develo
 To build from source, you need to have the following tools installed:
 
 ```
-go 1.26 or higher
+go 1.27.2 or higher
 make
 clang
 llvm

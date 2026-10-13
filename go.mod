@@ -1,6 +1,6 @@
 module github.com/bomfather/bomfather/agent
 
-go 1.26.6
+go 1.27.2
 
 require (
 	github.com/cilium/ebpf v0.22.0
