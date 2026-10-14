@@ -19,6 +19,10 @@ const (
 	List                             = "list"
 	Update                           = "update"
 	LoadProg                         = "load-prog"
+	Sleep                            = "sleep"
+	PtraceAttach                     = "ptrace-attach"
+	PtraceStat                       = "ptrace-stat"
+	PtraceMem                        = "ptrace-mem"
 	ExitBlocked                      = 0
 	ExitAccessible                   = 10
 	ExitError                        = 2
