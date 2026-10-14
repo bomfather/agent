@@ -359,7 +359,7 @@ func pruneBPFPrograms(spec *ebpf.CollectionSpec, kernel615Plus bool, disableBPFO
 //
 // The returned collection is ready for later setup steps such as writing map
 // entries and attaching LSM/tracepoint programs.
-func loadEBPFCollection(bpfProgram []byte, kernel615Plus bool, disableBPFOps bool) (*ebpf.Collection, error) {
+func loadEBPFCollection(bpfProgram []byte, kernel615Plus bool, disableBPFOps bool, blockPtrace bool) (*ebpf.Collection, error) {
 	if err := rlimit.RemoveMemlock(); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrMemlockRemoval, err)
 	}
@@ -370,6 +370,11 @@ func loadEBPFCollection(bpfProgram []byte, kernel615Plus bool, disableBPFOps boo
 	}
 
 	pruneBPFPrograms(spec, kernel615Plus, disableBPFOps)
+	if !blockPtrace {
+		delete(spec.Programs, "lsm_inode_permission")
+		delete(spec.Programs, "tp_exit_openat")
+		delete(spec.Programs, "tp_exit_openat2")
+	}
 
 	coll, err := ebpf.NewCollection(spec)
 	if err != nil {
@@ -555,7 +560,7 @@ func InitializeEBPF(bpfProgram []byte, mapWrites []EBPFMapWrite, hasSecureShutdo
 		return nil, fmt.Errorf("%w: determine kernel version: %v", ErrKernelUnsupported, err)
 	}
 
-	coll, err := loadEBPFCollection(bpfProgram, kernel615Plus, disableBPFOps)
+	coll, err := loadEBPFCollection(bpfProgram, kernel615Plus, disableBPFOps, blockPtrace)
 	if err != nil {
 		return nil, err
 	}
