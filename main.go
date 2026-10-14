@@ -304,7 +304,7 @@ func runAgent(c *cli.Context) error {
 		return err
 	}
 
-	ebpfResources, err := ebpf.InitializeEBPF(bpfProgram, ebpfMapWrites, secureShutdownEnabled, cfg.Flags.SecureMaps, cfg.Flags.DisableBPFOps)
+	ebpfResources, err := ebpf.InitializeEBPF(bpfProgram, ebpfMapWrites, secureShutdownEnabled, cfg.Flags.SecureMaps, cfg.Flags.DisableBPFOps, cfg.Flags.BlockPtrace)
 	if err != nil {
 		logger.Error("failed to initialize eBPF", "error", err)
 		return err
