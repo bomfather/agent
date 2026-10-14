@@ -18,16 +18,16 @@ import (
 )
 
 const (
-	INPUT_PATH_MAX  = 1024
-	FILE_CHUNK_SIZE = 128
-	BOOT_ID_MAX     = 41
-	TASK_COMM_LEN   = 16
-	MAX_EXACT_ARGS  = 64
-	INVALID_ACCESS_INDEX = ^uint32(0) 
-	MAX_ARGS        = MAX_EXACT_ARGS + 1
-	MAX_ARG_LEN     = 128
-	LSM_LIST_PATH   = "/sys/kernel/security/lsm"
-	LSM_BPF_MODULE  = "bpf"
+	INPUT_PATH_MAX       = 1024
+	FILE_CHUNK_SIZE      = 128
+	BOOT_ID_MAX          = 41
+	TASK_COMM_LEN        = 16
+	MAX_EXACT_ARGS       = 64
+	INVALID_ACCESS_INDEX = ^uint32(0)
+	MAX_ARGS             = MAX_EXACT_ARGS + 1
+	MAX_ARG_LEN          = 128
+	LSM_LIST_PATH        = "/sys/kernel/security/lsm"
+	LSM_BPF_MODULE       = "bpf"
 	// lsm/bpf hook signature changed in Linux 6.15:
 	// - v6.14: LSM_HOOK(int, 0, bpf, int cmd, union bpf_attr *attr, unsigned int size)
 	// - v6.15: LSM_HOOK(int, 0, bpf, int cmd, union bpf_attr *attr, unsigned int size, bool kernel)
@@ -84,8 +84,8 @@ const (
 	ShouldStopShutdownMapName            = "bomfather_should_stop_shutdown"
 	GlobalReadOnlyMapName                = "bomfather_global_read_only"
 	GlobalReadOnlyChunkToIDMapName       = "bomfather_global_read_only_chunk_to_id"
-	RestrictedExecutableChunkToIDMapName  = "bomfather_restricted_executable_chunk_to_id"
-	RestrictedExecutableMapName            = "bomfather_restricted_executable"
+	RestrictedExecutableChunkToIDMapName = "bomfather_restricted_executable_chunk_to_id"
+	RestrictedExecutableMapName          = "bomfather_restricted_executable"
 	BootIDMapName                        = "bomfather_boot_id"
 	DebugPrintingMapName                 = "bomfather_debug_config"
 	TrustedExecutablesMapName            = "bomfather_trusted_executables"
@@ -206,22 +206,11 @@ var basePrograms = []Program{
 		TracepointName:     "cgroup_rmdir",
 	},
 	&TracepointProgram{
-		ProgName:           "tp_exit_openat",
-		TracepointCategory: "syscalls",
-		TracepointName:     "sys_exit_openat",
-	},
-	&TracepointProgram{
-		ProgName:           "tp_exit_openat2",
-		TracepointCategory: "syscalls",
-		TracepointName:     "sys_exit_openat2",
-	},
-	&TracepointProgram{
 		ProgName:           "tp_sched_process_exit",
 		TracepointCategory: "sched",
 		TracepointName:     "sched_process_exit",
 	},
 	&LSMProgram{ProgName: "lsm_file_open"},
-	&LSMProgram{ProgName: "lsm_inode_permission"},
 	&LSMProgram{ProgName: "lsm_path_rename"},
 	&LSMProgram{ProgName: "lsm_path_unlink"},
 	&LSMProgram{ProgName: "lsm_path_rmdir"},
@@ -434,7 +423,7 @@ func attachPrograms(coll *ebpf.Collection) ([]link.Link, error) {
 			cleanupResources(coll, programLinks)
 			return nil, fmt.Errorf("program %q not found or failed to attach", progName)
 		}
-		
+
 		programLinks = append(programLinks, progLink)
 	}
 
@@ -552,7 +541,7 @@ func setupJumpTable(coll *ebpf.Collection) error {
 // so that no other process can go through the setup process at the same time.
 var setupMutex sync.Mutex
 
-func InitializeEBPF(bpfProgram []byte, mapWrites []EBPFMapWrite, hasSecureShutdown, shouldSecureMaps, disableBPFOps bool) (*EBPFResources, error) {
+func InitializeEBPF(bpfProgram []byte, mapWrites []EBPFMapWrite, hasSecureShutdown, shouldSecureMaps, disableBPFOps, blockPtrace bool) (*EBPFResources, error) {
 
 	setupMutex.Lock()
 	defer setupMutex.Unlock()
@@ -578,6 +567,25 @@ func InitializeEBPF(bpfProgram []byte, mapWrites []EBPFMapWrite, hasSecureShutdo
 	if hasSecureShutdown {
 		programs = append(programs, &LSMProgram{ProgName: "lsm_task_kill"})
 	}
+
+	// The procstat gate is only read when ptrace blocking is on.
+	// We don't need these programs if ptrace blocking is off.
+	if blockPtrace {
+		programs = append(programs,
+			&LSMProgram{ProgName: "lsm_inode_permission"},
+			&TracepointProgram{
+				ProgName:           "tp_exit_openat",
+				TracepointCategory: "syscalls",
+				TracepointName:     "sys_exit_openat",
+			},
+			&TracepointProgram{
+				ProgName:           "tp_exit_openat2",
+				TracepointCategory: "syscalls",
+				TracepointName:     "sys_exit_openat2",
+			},
+		)
+	}
+
 	bpfProgName, bpfProgEnabled := selectBPFProgram(kernel615Plus, disableBPFOps)
 	if bpfProgEnabled {
 		programs = append(programs, &LSMProgram{ProgName: bpfProgName})
