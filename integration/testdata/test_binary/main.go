@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -61,6 +62,20 @@ func main() {
 		os.Exit(updateMap(mapsPidArg(), mapsNameArg()))
 	case command.LoadProg:
 		os.Exit(loadProg())
+	case command.Sleep:
+		// fd 3 is the readiness pipe from startProtectedChild. Writing it means
+		// this exec has finished, so the agent's exec hook has already run.
+		if ready := os.NewFile(3, "ready"); ready != nil {
+			_, _ = ready.Write([]byte{1})
+			_ = ready.Close()
+		}
+		time.Sleep(30 * time.Second)
+	case command.PtraceAttach:
+		os.Exit(ptraceAttach())
+	case command.PtraceStat:
+		os.Exit(ptraceStat())
+	case command.PtraceMem:
+		os.Exit(ptraceMem())
 	default:
 		fmt.Fprintf(os.Stderr, "test_binary: unknown subcommand %q\n", os.Args[1])
 		os.Exit(2)
@@ -502,5 +517,88 @@ func loadProg() int {
 	}
 	prog.Close()
 	fmt.Fprintln(os.Stderr, "BPF_PROG_LOAD succeeded")
+	return command.ExitAccessible
+}
+
+// startProtectedChild execs the same test binary again and waits until that exec has
+// finished, so the agent's exec hook has marked the child protected.
+func startProtectedChild() *exec.Cmd {
+	readyR, readyW, err := os.Pipe()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ready pipe: %v\n", err)
+		os.Exit(command.ExitError)
+	}
+	cmd := exec.Command(os.Args[0], command.Sleep)
+	cmd.ExtraFiles = []*os.File{readyW}
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "start child: %v\n", err)
+		os.Exit(command.ExitError)
+	}
+	_ = readyW.Close()
+	_ = readyR.SetDeadline(time.Now().Add(2 * time.Second))
+	var buf [1]byte
+	if _, err := readyR.Read(buf[:]); err != nil {
+		_ = cmd.Process.Kill()
+		fmt.Fprintf(os.Stderr, "child not ready: %v\n", err)
+		os.Exit(command.ExitError)
+	}
+	_ = readyR.Close()
+	return cmd
+}
+
+func stopChild(cmd *exec.Cmd) {
+	_ = cmd.Process.Kill()
+	_ = cmd.Wait()
+}
+
+func ptraceAttach() int {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	cmd := startProtectedChild()
+	defer stopChild(cmd)
+
+	err := unix.PtraceAttach(cmd.Process.Pid)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ptrace attach: %v\n", err)
+		return exitFor(err)
+	}
+	var ws unix.WaitStatus
+	_, _ = unix.Wait4(cmd.Process.Pid, &ws, 0, nil)
+	_ = unix.PtraceDetach(cmd.Process.Pid)
+	fmt.Fprintln(os.Stderr, "ptrace attach succeeded")
+	return command.ExitAccessible
+}
+
+func ptraceStat() int {
+	cmd := startProtectedChild()
+	defer stopChild(cmd)
+
+	line, err := readFirstLine(fmt.Sprintf("/proc/%d/stat", cmd.Process.Pid))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "read stat: %v\n", err)
+		return exitFor(err)
+	}
+	if line == "" {
+		fmt.Fprintln(os.Stderr, "stat file was empty")
+		return command.ExitError
+	}
+	fmt.Fprintln(os.Stderr, "stat read succeeded")
+	return command.ExitAccessible
+}
+
+func ptraceMem() int {
+	cmd := startProtectedChild()
+	defer stopChild(cmd)
+
+	f, err := os.Open(fmt.Sprintf("/proc/%d/mem", cmd.Process.Pid))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "open mem: %v\n", err)
+		return exitFor(err)
+	}
+	f.Close()
+	fmt.Fprintln(os.Stderr, "mem open succeeded")
 	return command.ExitAccessible
 }
