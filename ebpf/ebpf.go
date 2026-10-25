@@ -214,6 +214,7 @@ var basePrograms = []Program{
 	&LSMProgram{ProgName: "lsm_path_rename"},
 	&LSMProgram{ProgName: "lsm_path_unlink"},
 	&LSMProgram{ProgName: "lsm_path_rmdir"},
+	&LSMProgram{ProgName: "lsm_path_truncate"},
 	&LSMProgram{ProgName: "lsm_task_alloc"},
 	// &LSMProgram{ProgName: "lsm_file_permission"},
 	&LSMProgram{ProgName: "lsm_bprm_check_security"},

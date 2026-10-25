@@ -71,3 +71,75 @@ policies:
 		t.Fatalf("second executable should be denied writing %s: %v\n%s", sharedFile, err, deniedOut.String())
 	}
 }
+
+// TestTruncateNeedsWriteGrant checks that an executable with only a read grant
+// cannot truncate a file, either with an O_RDONLY|O_TRUNC open or truncate(2).
+func TestTruncateNeedsWriteGrant(t *testing.T) {
+	reader := buildTestBinary(t)
+
+	readDir := filepath.Join(t.TempDir(), "read")
+	if err := os.MkdirAll(readDir, 0o755); err != nil {
+		t.Fatalf("create read directory: %v", err)
+	}
+
+	readFile := filepath.Join(readDir, "read.txt")
+	if err := os.WriteFile(readFile, []byte("keep\n"), 0o644); err != nil {
+		t.Fatalf("write read file: %v", err)
+	}
+
+	policy := fmt.Sprintf(`
+policies:
+  - executable: "filepath = %s"
+    can_access_dirs:
+      - "%s: read"
+    can_run:
+      - "%s"
+`, reader, readDir, reader)
+
+	runAgent(t, policy)
+
+	cmd := exec.Command(reader, command.TruncateMustBeDenied, readFile)
+
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("read-only executable should be denied truncating %s: %v\n%s", readFile, err, out.String())
+	}
+	if out.String() != "keep\n" {
+		t.Fatalf("%s was truncated: got %q", readFile, out.String())
+	}
+}
+
+// TestTruncateOverwritesWithoutAgent checks that O_RDONLY|O_TRUNC and truncate(2)
+// empty a file when the agent is not running.
+func TestTruncateOverwritesWithoutAgent(t *testing.T) {
+	exe := buildTestBinary(t)
+	dir := t.TempDir()
+
+	for _, mode := range []string{"open", "syscall"} {
+		t.Run(mode, func(t *testing.T) {
+			path := filepath.Join(dir, mode+".txt")
+			if err := os.WriteFile(path, []byte("keep\n"), 0o644); err != nil {
+				t.Fatalf("write %s: %v", path, err)
+			}
+
+			cmd := exec.Command(exe, command.Truncate, mode, path)
+			var out bytes.Buffer
+			cmd.Stdout = &out
+			cmd.Stderr = &out
+			if err := cmd.Run(); err != nil {
+				t.Fatalf("%s should empty %s when the agent is not running: %v\n%s", mode, path, err, out.String())
+			}
+
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read %s: %v", path, err)
+			}
+			if len(data) != 0 {
+				t.Fatalf("%s was not emptied by %s: got %q", path, mode, data)
+			}
+		})
+	}
+}

@@ -69,6 +69,7 @@ const volatile int pid_target = 0; // Volatile constant for the target PID; if 0
 
 // Index's in tempmap
 #define TEMP_FILEPATH_PATH_CHECK 0
+#define TEMP_FILEPATH_PATH_TRUNCATE 1
 #define TEMP_FILEPATH_TASK_EXEC_FALLBACK 2
 #define TEMP_FILEPATH_PATH_RENAME_OLD 3
 #define TEMP_FILEPATH_PATH_RENAME_NEW 4
@@ -103,6 +104,7 @@ const volatile int pid_target = 0; // Volatile constant for the target PID; if 0
 #define O_WRONLY 1
 #define O_RDWR   2
 #define O_ACCMODE 3
+#define O_TRUNC  01000
 
 // Define file type constants if not already defined
 #define S_IFMT  0170000
@@ -2098,7 +2100,8 @@ int BPF_PROG(lsm_file_open, struct file *file) {
 
     unsigned int flags = BPF_CORE_READ(file, f_flags);
 
-    if ((flags & O_ACCMODE) != O_RDONLY) {
+    // O_TRUNC truncates the file even when it is opened O_RDONLY.
+    if ((flags & O_ACCMODE) != O_RDONLY || (flags & O_TRUNC)) {
         open_mode = ACCESS_WRITE;
     } else {
         open_mode = ACCESS_READ;
@@ -2380,6 +2383,20 @@ int BPF_PROG(lsm_path_unlink, struct path *dir, struct dentry *dentry) {
     struct path p = {.mnt = BPF_CORE_READ(dir, mnt), .dentry = dentry};// we copy since in this hook the path struct in the arguments is not properly populated
     u32 length = 0;
     char *path_str = get_filename_from_path(&p, TEMP_FILEPATH_PATH_UNLINK, &length);
+    if (!path_str) {
+        return 0;
+    }
+
+    struct process_id process_id = {0};
+    get_process_id(&process_id);
+
+    return enforce_access_policy(ACCESS_WRITE, path_str, &process_id, length, NULL);
+}
+
+SEC("lsm/path_truncate")
+int BPF_PROG(lsm_path_truncate, const struct path *path) {
+    u32 length = 0;
+    char *path_str = get_filename_from_path((struct path *)path, TEMP_FILEPATH_PATH_TRUNCATE, &length);
     if (!path_str) {
         return 0;
     }

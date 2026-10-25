@@ -46,6 +46,10 @@ func main() {
 		write()
 	case command.WriteMustBeDenied:
 		writeMustBeDenied()
+	case command.TruncateMustBeDenied:
+		truncateMustBeDenied()
+	case command.Truncate:
+		truncateFile()
 	case command.Connect:
 		connect()
 	case command.ReadMustBeDenied:
@@ -216,6 +220,45 @@ func writeMustBeDenied() {
 	}
 	if err := os.WriteFile(os.Args[2], []byte("modified\n"), 0o644); err == nil {
 		os.Exit(10)
+	}
+}
+
+func truncateMustBeDenied() {
+	if len(os.Args) != 3 {
+		os.Exit(2)
+	}
+	if f, err := os.OpenFile(os.Args[2], os.O_RDONLY|os.O_TRUNC, 0); err == nil {
+		_ = f.Close()
+		os.Exit(10)
+	}
+	if err := os.Truncate(os.Args[2], 0); err == nil {
+		os.Exit(11)
+	}
+	line, err := readFirstLine(os.Args[2])
+	if err != nil {
+		os.Exit(12)
+	}
+	fmt.Println(line)
+}
+
+func truncateFile() {
+	if len(os.Args) != 4 {
+		os.Exit(2)
+	}
+	path := os.Args[3]
+	switch os.Args[2] {
+	case "open":
+		f, err := os.OpenFile(path, os.O_RDONLY|os.O_TRUNC, 0)
+		if err != nil {
+			os.Exit(10)
+		}
+		_ = f.Close()
+	case "syscall":
+		if err := os.Truncate(path, 0); err != nil {
+			os.Exit(11)
+		}
+	default:
+		os.Exit(2)
 	}
 }
 
