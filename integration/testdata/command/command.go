@@ -9,6 +9,8 @@ const (
 	WriteToReadonly                  = "write-to-readonly"
 	Write                            = "write"
 	WriteMustBeDenied                = "write-must-be-denied"
+	TruncateMustBeDenied             = "truncate-must-be-denied"
+	Truncate                         = "truncate"
 	Connect                          = "connect"
 	ReadMustBeDenied                 = "read-must-be-denied"
 	ParentReadAllowedChildReadDenied = "parent-read-allowed-child-read-denied"
