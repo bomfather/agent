@@ -1857,9 +1857,15 @@ int BPF_PROG(lsm_task_kill, struct task_struct *p, struct kernel_siginfo *info, 
         return 0;
     }
 
-    u32 pid = BPF_CORE_READ(p, pid);
-    u32 *is_userspace_process = bpf_map_lookup_elem(&bomfather_userspace_process_pid, &pid);
+    // The userspace map is keyed by thread group id, so we need to match the thread group id, not the per thread id.
+    u32 tgid = BPF_CORE_READ(p, tgid);
+    u32 *is_userspace_process = bpf_map_lookup_elem(&bomfather_userspace_process_pid, &tgid);
     if (is_userspace_process) {
+        // The agent process itself is to kill itself
+        u32 sender_tgid = bpf_get_current_pid_tgid() >> 32;
+        if (tgid == sender_tgid) {
+            return 0;
+        }
         struct process_id process = {0};
         get_process_id(&process);
         push_violation("Kill attempt on bomfather agent userspace process", VIOL_TASK_KILL, &process);
@@ -1933,8 +1939,9 @@ int BPF_PROG(lsm_ptrace_access_check, struct task_struct *child, unsigned int mo
         return 0;
     }
 
-    u32 child_pid = BPF_CORE_READ(child, pid);
-    u32 *is_userspace_process = bpf_map_lookup_elem(&bomfather_userspace_process_pid, &child_pid);
+    // We need to do the same thing as lsm_task_kill, match the thread-group id, not the per-thread id.
+    u32 child_tgid = BPF_CORE_READ(child, tgid);
+    u32 *is_userspace_process = bpf_map_lookup_elem(&bomfather_userspace_process_pid, &child_tgid);
     if (is_userspace_process || should_protect_process(child)) {
         push_violation(is_userspace_process ? "ptrace on bomfather agent" : "ptrace on protected process", VIOL_PTRACE, NULL);
         return return_value();
