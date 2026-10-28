@@ -47,7 +47,7 @@ func TestNonLeaderThreadKillBlocked(t *testing.T) {
 		t.Fatalf("listen: %v", err)
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
-	ln.Close()
+	_ = ln.Close()
 
 	agent := runAgentInDir(t, dir, fmt.Sprintf(`
 flags:
@@ -95,7 +95,8 @@ func requestShutdown(port int, key *rsa.PrivateKey) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	challengeBody := resp.Body
+	defer func() { _ = challengeBody.Close() }()
 	if err := json.NewDecoder(resp.Body).Decode(&challenge); err != nil {
 		return err
 	}
@@ -115,7 +116,7 @@ func requestShutdown(port int, key *rsa.PrivateKey) error {
 	if err != nil {
 		return err
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("stop: %s", resp.Status)
 	}
