@@ -80,6 +80,8 @@ func main() {
 		os.Exit(ptraceStat())
 	case command.PtraceMem:
 		os.Exit(ptraceMem())
+	case command.Tgkill:
+		os.Exit(tgkill())
 	default:
 		fmt.Fprintf(os.Stderr, "test_binary: unknown subcommand %q\n", os.Args[1])
 		os.Exit(2)
@@ -643,5 +645,29 @@ func ptraceMem() int {
 	}
 	f.Close()
 	fmt.Fprintln(os.Stderr, "mem open succeeded")
+	return command.ExitAccessible
+}
+
+// tgkill probes permission to signal one thread: test_binary tgkill TGID TID.
+func tgkill() int {
+	if len(os.Args) != 4 {
+		fmt.Fprintln(os.Stderr, "usage: test_binary tgkill TGID TID")
+		return command.ExitError
+	}
+	tgid, err := strconv.Atoi(os.Args[2])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid tgid %q\n", os.Args[2])
+		return command.ExitError
+	}
+	tid, err := strconv.Atoi(os.Args[3])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid tid %q\n", os.Args[3])
+		return command.ExitError
+	}
+	if err := unix.Tgkill(tgid, tid, 0); err != nil {
+		fmt.Fprintf(os.Stderr, "tgkill %d %d: %v\n", tgid, tid, err)
+		return exitFor(err)
+	}
+	fmt.Fprintf(os.Stderr, "tgkill %d %d succeeded\n", tgid, tid)
 	return command.ExitAccessible
 }

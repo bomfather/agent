@@ -2,6 +2,7 @@ package integration
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,7 +41,8 @@ func waitForAgentReady(t *testing.T, cmd *exec.Cmd, stdout, stderr *bytes.Buffer
 		if bytes.Contains(stdout.Bytes(), []byte(agentReadyLogLine)) {
 			return
 		}
-		if err := syscall.Kill(cmd.Process.Pid, syscall.Signal(0)); err != nil {
+		// EPERM means the process is alive and kill protection refused the probe.
+		if err := syscall.Kill(cmd.Process.Pid, syscall.Signal(0)); err != nil && !errors.Is(err, syscall.EPERM) {
 			t.Fatalf("Agent process exited unexpectedly: %v\nStdout: %s\nStderr: %s", err, stdout.String(), stderr.String())
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -111,7 +113,8 @@ func runAgentInDir(t *testing.T, tempDir, config string) *RunningAgent {
 
 	time.Sleep(2 * time.Second)
 
-	if err := syscall.Kill(cmd.Process.Pid, syscall.Signal(0)); err != nil {
+	// EPERM means the process is alive and kill protection refused the probe.
+	if err := syscall.Kill(cmd.Process.Pid, syscall.Signal(0)); err != nil && !errors.Is(err, syscall.EPERM) {
 		t.Fatalf("Agent process exited unexpectedly: %v\nStdout: %s\nStderr: %s", err, stdOut.String(), stdErr.String())
 	}
 
