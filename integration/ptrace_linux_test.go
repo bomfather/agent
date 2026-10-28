@@ -36,14 +36,14 @@ attributes:
 	return policy
 }
 
-func runPtraceHelper(t *testing.T, helper, subcommand string) int {
+func runPtraceHelper(t *testing.T, helper string, args ...string) int {
 	t.Helper()
-	cmd := exec.Command(helper, subcommand)
+	cmd := exec.Command(helper, args...)
 	var output bytes.Buffer
 	cmd.Stdout = &output
 	cmd.Stderr = &output
 	err := cmd.Run()
-	t.Logf("%s output:\n%s", subcommand, output.String())
+	t.Logf("%s output:\n%s", args, output.String())
 	if err == nil {
 		return 0
 	}
@@ -51,7 +51,7 @@ func runPtraceHelper(t *testing.T, helper, subcommand string) int {
 	if errors.As(err, &ee) {
 		return ee.ExitCode()
 	}
-	t.Fatalf("run %s: %v\n%s", subcommand, err, output.String())
+	t.Fatalf("run %v: %v\n%s", args, err, output.String())
 	return -1
 }
 
