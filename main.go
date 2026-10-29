@@ -225,10 +225,16 @@ func runAgent(c *cli.Context) error {
 	}
 
 	if config.HasFsVerityDigests(cfg) {
-		if supported, kErr := ebpf.IsFsVeritySupported(); kErr != nil {
-			logger.Warn("could not determine kernel version for fs-verity support", "error", kErr)
-		} else if !supported {
-			logger.Warn("fsverity_digest is configured but kernel < 6.8 does not support bpf_get_fsverity_digest; digest enforcement is disabled")
+		supported, kErr := ebpf.IsFsVeritySupported()
+		if kErr != nil {
+			err := fmt.Errorf("fsverity_digest is configured but the kernel version could not be determined: %w", kErr)
+			logger.Error("refusing to start", "error", err)
+			return err
+		}
+		if !supported {
+			err := fmt.Errorf("fsverity_digest is configured but this kernel is older than 6.8 and cannot read fs-verity digests")
+			logger.Error("refusing to start", "error", err)
+			return err
 		}
 	}
 

@@ -1258,7 +1258,7 @@ static __noinline int fsverity_check_path(const char *filename, struct file *fil
 
     // bpf_get_fsverity_digest might not be available on older kernels.
     if (!bpf_get_fsverity_digest)
-        return 0;
+        return -1;
 
     struct bpf_dynptr ptr;
     bpf_dynptr_from_mem(digest, sizeof(*digest), 0, &ptr);
