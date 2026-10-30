@@ -80,6 +80,10 @@ func main() {
 		os.Exit(ptraceStat())
 	case command.PtraceMem:
 		os.Exit(ptraceMem())
+	case command.PtraceTraceme:
+		os.Exit(ptraceTraceme())
+	case command.PtraceTracemeChild:
+		os.Exit(ptraceTracemeChild())
 	case command.Tgkill:
 		os.Exit(tgkill())
 	default:
@@ -632,6 +636,35 @@ func ptraceStat() int {
 	}
 	fmt.Fprintln(os.Stderr, "stat read succeeded")
 	return command.ExitAccessible
+}
+
+// ptraceTracemeChild is the process that calls PTRACE_TRACEME.
+func ptraceTracemeChild() int {
+	_, _, errno := unix.Syscall6(unix.SYS_PTRACE, uintptr(unix.PTRACE_TRACEME), 0, 0, 0, 0, 0)
+	if errno != 0 {
+		fmt.Fprintf(os.Stderr, "ptrace traceme: %v\n", errno)
+		return exitFor(errno)
+	}
+	fmt.Fprintln(os.Stderr, "ptrace traceme succeeded")
+	return command.ExitAccessible
+}
+
+// ptraceTraceme is the parent. The integration test runs this command. It
+// starts ptraceTracemeChild and returns that child's exit code.
+func ptraceTraceme() int {
+	cmd := exec.Command(os.Args[0], command.PtraceTracemeChild)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	err := cmd.Run()
+	if err == nil {
+		return command.ExitBlocked
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return ee.ExitCode()
+	}
+	fmt.Fprintf(os.Stderr, "traceme child: %v\n", err)
+	return command.ExitError
 }
 
 func ptraceMem() int {
