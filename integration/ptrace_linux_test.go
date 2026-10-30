@@ -106,4 +106,15 @@ func TestBlockPtrace(t *testing.T) {
 			t.Fatalf("allowlisted tracer should attach, got exit %d", code)
 		}
 	})
+
+	t.Run("block_ptrace on: traceme is blocked", func(t *testing.T) {
+		// Run before the agent so a host that already rejects traceme does not look like an agent denial.
+		if code := runPtraceHelper(t, helper, command.PtraceTraceme); code != command.ExitAccessible {
+			t.Skipf("host does not allow a child to PTRACE_TRACEME (exit %d); cannot attribute a denial to the agent", code)
+		}
+		runAgent(t, ptracePolicy(helper, dir, true, false))
+		if code := runPtraceHelper(t, helper, command.PtraceTraceme); code != command.ExitBlocked {
+			t.Fatalf("traceme of a protected child should be blocked, got exit %d", code)
+		}
+	})
 }
