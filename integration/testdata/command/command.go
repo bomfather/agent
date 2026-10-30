@@ -25,6 +25,8 @@ const (
 	PtraceAttach                     = "ptrace-attach"
 	PtraceStat                       = "ptrace-stat"
 	PtraceMem                        = "ptrace-mem"
+	PtraceTraceme                    = "ptrace-traceme"
+	PtraceTracemeChild               = "ptrace-traceme-child"
 	Tgkill                           = "tgkill"
 	ExitBlocked                      = 0
 	ExitAccessible                   = 10
