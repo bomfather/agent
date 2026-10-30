@@ -219,6 +219,7 @@ var basePrograms = []Program{
 	// &LSMProgram{ProgName: "lsm_file_permission"},
 	&LSMProgram{ProgName: "lsm_bprm_check_security"},
 	&LSMProgram{ProgName: "lsm_ptrace_access_check"},
+	&LSMProgram{ProgName: "lsm_ptrace_traceme"},
 	&LSMProgram{ProgName: "lsm_socket_connect"},
 	&LSMProgram{ProgName: "lsm_sb_mount"},
 	&LSMProgram{ProgName: "lsm_mmap_file"},

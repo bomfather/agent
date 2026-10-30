@@ -1925,6 +1925,7 @@ int BPF_PROG(lsm_ptrace_access_check, struct task_struct *child, unsigned int mo
     if (!tctx) {
         return 0;
     }
+    // tctx->execve_event.exepath is the tracer executable path
     struct path_key *pkey = make_path_key_from_current_mnt_ns(tctx->execve_event.exepath, TEMP_CONTAINER_PATH_ALLOWED_PTRACE_EXECUTABLE);
     if (!pkey) {
         return 0;
@@ -1943,6 +1944,64 @@ int BPF_PROG(lsm_ptrace_access_check, struct task_struct *child, unsigned int mo
     u32 child_tgid = BPF_CORE_READ(child, tgid);
     u32 *is_userspace_process = bpf_map_lookup_elem(&bomfather_userspace_process_pid, &child_tgid);
     if (is_userspace_process || should_protect_process(child)) {
+        push_violation(is_userspace_process ? "ptrace on bomfather agent" : "ptrace on protected process", VIOL_PTRACE, NULL);
+        return return_value();
+    }
+    return 0;
+}
+
+// PTRACE_TRACEME: current is the tracee volunteering to be traced, and parent is the tracer.
+// So, the allowlist is the parent's executable.
+SEC("lsm/ptrace_traceme")
+int BPF_PROG(lsm_ptrace_traceme, struct task_struct *parent) {
+    u32 zero = 0;
+    u32 *block = bpf_map_lookup_elem(&bomfather_block_ptrace, &zero);
+
+    if (!block || *block == 0) {
+        return 0;
+    }
+    if (!parent) { // if there isn't a parent, then we don't need to check the allowlist
+        return 0;
+    }
+
+    // the parent is the tracer
+    struct task_ctx *parent_ctx = get_task_ctx_safe(parent);
+    if (!parent_ctx) {
+        return 0;
+    }
+
+    // make_path_key_from_current_mnt_ns() would use the child, but we need to use the parent's executable
+    u32 policy_id = 0;
+    u32 *policy_id_ptr = get_policy_id_for_task_mnt_ns(parent);
+    if (policy_id_ptr == NULL) {
+        struct container_id parent_cgroup = get_current_container_id_from_task(parent);
+        if (parent_cgroup.cgroup_id != INVALID_CGROUP_ID) {
+            policy_id = -1;
+        }
+    } else {
+        policy_id = *policy_id_ptr;
+    }
+
+    struct path_key *pkey = make_path_key(policy_id, parent_ctx->execve_event.exepath, TEMP_CONTAINER_PATH_ALLOWED_PTRACE_EXECUTABLE);
+    if (!pkey) {
+        return 0;
+    }
+
+    u32 *allowed_ptrace_executable = bpf_map_lookup_elem(&bomfather_allowed_ptrace_executables, pkey);
+    if (allowed_ptrace_executable && *allowed_ptrace_executable != 0) {
+        return 0;
+    }
+
+    // current_task is the tracee
+    struct task_struct *current_task = bpf_get_current_task_btf();
+    if (!current_task) {
+        return 0;
+    }
+
+    // Match the thread-group id, same as lsm_ptrace_access_check.
+    u32 current_tgid = BPF_CORE_READ(current_task, tgid);
+    u32 *is_userspace_process = bpf_map_lookup_elem(&bomfather_userspace_process_pid, &current_tgid);
+    if (is_userspace_process || should_protect_process(current_task)) {
         push_violation(is_userspace_process ? "ptrace on bomfather agent" : "ptrace on protected process", VIOL_PTRACE, NULL);
         return return_value();
     }
