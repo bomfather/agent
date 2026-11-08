@@ -64,14 +64,15 @@ type ShutdownConfig struct {
 }
 
 type Attribute struct {
-	Path             string   `yaml:"path"`
-	AllowedLDEnv     bool     `yaml:"allowed_ld_env"`
-	AllowedPtrace    bool     `yaml:"allowed_ptrace"`
-	AllowedGPU       bool     `yaml:"allowed_gpu"`
-	AllowedBPFOps    bool     `yaml:"allowed_bpf_ops"`
-	OutputOpenats    bool     `yaml:"output_openats_for_executable"`
-	GlobalReadOnly   bool     `yaml:"global_read_only"`
-	CanOnlyAccessIPs []string `yaml:"can_only_access_ips"`
+	Path                string   `yaml:"path"`
+	AllowedLDEnv        bool     `yaml:"allowed_ld_env"`
+	AllowedPtrace       bool     `yaml:"allowed_ptrace"`
+	AllowedInMemoryExec bool     `yaml:"allowed_in_memory_exec"`
+	AllowedGPU          bool     `yaml:"allowed_gpu"`
+	AllowedBPFOps       bool     `yaml:"allowed_bpf_ops"`
+	OutputOpenats       bool     `yaml:"output_openats_for_executable"`
+	GlobalReadOnly      bool     `yaml:"global_read_only"`
+	CanOnlyAccessIPs    []string `yaml:"can_only_access_ips"`
 }
 
 // --------------- Types for parsing paths in the config file ---------------
@@ -1027,6 +1028,7 @@ func parseConfigFromStruct(config Config, debugEnabled bool) ([]agentebpf.EBPFMa
 	}
 
 	allowedPtraceExecutables := agentebpf.EBPFMapWrite{MapName: agentebpf.AllowedPtraceExecutablesMapName, Entries: make(map[any]any)}
+	allowedInMemoryExecExecutables := agentebpf.EBPFMapWrite{MapName: agentebpf.AllowedInMemoryExecExecutablesMapName, Entries: make(map[any]any)}
 	ldEnvAllowedExecutables := agentebpf.EBPFMapWrite{MapName: agentebpf.LDEnvAllowedExecutablesMapName, Entries: make(map[any]any)}
 	allowedBPFOpsExecutables := agentebpf.EBPFMapWrite{MapName: agentebpf.AllowedBPFOpsExecutablesMapName, Entries: make(map[any]any)}
 
@@ -1046,13 +1048,18 @@ func parseConfigFromStruct(config Config, debugEnabled bool) ([]agentebpf.EBPFMa
 				allowedBPFOpsExecutables.Entries[pathKeyWithSlash] = uint32(1)
 				allowedBPFOpsExecutables.Entries[pathKeyWithoutSlash] = uint32(1)
 			}
+			if attribute.AllowedInMemoryExec {
+				allowedInMemoryExecExecutables.Entries[pathKeyWithSlash] = uint32(1)
+				allowedInMemoryExecExecutables.Entries[pathKeyWithoutSlash] = uint32(1)
+			}
 
 			var accessControl AccessControlValue
 			accessControl, ok := trustedExecutables.Entries[pathKeyWithSlash].(AccessControlValue)
 			if !ok {
-				// If the only attribute set is the BPF-ops exemption, there is
-				// no access-control entry to augment; nothing more to do.
-				if attribute.AllowedBPFOps && !attribute.AllowedGPU && !attribute.AllowedPtrace &&
+				// These exemptions only write their own allowlist maps. An
+				// executable with no other attribute needs no access-control entry.
+				if (attribute.AllowedBPFOps || attribute.AllowedInMemoryExec) &&
+					!attribute.AllowedGPU && !attribute.AllowedPtrace &&
 					!attribute.AllowedLDEnv && !attribute.OutputOpenats && len(attribute.CanOnlyAccessIPs) == 0 {
 					continue
 				}
@@ -1178,7 +1185,7 @@ func parseConfigFromStruct(config Config, debugEnabled bool) ([]agentebpf.EBPFMa
 		}
 	}
 
-	mapsArray = append(mapsArray, trustedExecutables, allowedBPFOpsExecutables, allowedPtraceExecutables, ldEnvAllowedExecutables, globalReadOnly, globalReadOnlyChunkToID, fsverityPinlist, pythonIdentifiers, restrictedExecutables, restrictedExecutableChunkToID)
+	mapsArray = append(mapsArray, trustedExecutables, allowedBPFOpsExecutables, allowedPtraceExecutables, allowedInMemoryExecExecutables, ldEnvAllowedExecutables, globalReadOnly, globalReadOnlyChunkToID, fsverityPinlist, pythonIdentifiers, restrictedExecutables, restrictedExecutableChunkToID)
 
 	ipToIDMap, err := setupIPtoIDMap(networkIDMapper, networkToConvert)
 	if err != nil {

@@ -67,39 +67,40 @@ var (
 // ----------------- eBPF map names -----------------
 
 const (
-	AllowedPtraceExecutablesMapName      = "bomfather_allowed_ptrace_executables"
-	IPToIDMapName                        = "bomfather_ip_to_id"
-	ExclusiveIPMaskMapName               = "bomfather_exclusive_ip_mask"
-	OpenatEventsMapName                  = "bomfather_openat_events"
-	ExecveEventsMapName                  = "bomfather_execve_events"
-	ViolationEventsMapName               = "bomfather_log_failures"
-	ContainerIDToContainerContextMapName = "bomfather_container_id_to_container_context"
-	CgroupIDToContainerContextMapName    = "bomfather_cgroup_id_to_container_context"
-	ShouldStopLDEnvMapName               = "bomfather_should_stop_ld_env"
-	FileOpenJumpTableMapName             = "bomfather_file_open_jump_table"
-	MountCheckJumpTableMapName           = "bomfather_mount_check_jump_table"
-	ShouldOutputOpenatsMapName           = "bomfather_should_output_openats"
-	UserspaceProcessPIDMapName           = "bomfather_userspace_process_pid"
-	ShouldSecureMapsMapName              = "bomfather_should_secure_maps"
-	ShouldStopShutdownMapName            = "bomfather_should_stop_shutdown"
-	GlobalReadOnlyMapName                = "bomfather_global_read_only"
-	GlobalReadOnlyChunkToIDMapName       = "bomfather_global_read_only_chunk_to_id"
-	RestrictedExecutableChunkToIDMapName = "bomfather_restricted_executable_chunk_to_id"
-	RestrictedExecutableMapName          = "bomfather_restricted_executable"
-	BootIDMapName                        = "bomfather_boot_id"
-	DebugPrintingMapName                 = "bomfather_debug_config"
-	TrustedExecutablesMapName            = "bomfather_trusted_executables"
-	PythonIdentifierMapName              = "bomfather_python_identifier_id"
-	DirToIDMapName                       = "bomfather_dir_to_id"
-	ExecutableToIDMapName                = "bomfather_executable_to_id"
-	RestrictGPUMapName                   = "bomfather_restrict_gpu_access"
-	BlockPtraceMapName                   = "bomfather_block_ptrace"
-	BlockInMemoryExecMapName             = "bomfather_block_in_memory_exec"
-	LDEnvAllowedExecutablesMapName       = "bomfather_ld_env_allowed_executables"
-	SecurityLevelMapName                 = "bomfather_security_level"
-	RestrictBPFOpsMapName                = "bomfather_restrict_bpf_ops"
-	FsVerityPinlistMapName               = "bomfather_fsverity_pinlist"
-	AllowedBPFOpsExecutablesMapName      = "bomfather_allowed_bpf_ops_executables"
+	AllowedPtraceExecutablesMapName       = "bomfather_allowed_ptrace_executables"
+	AllowedInMemoryExecExecutablesMapName = "bomfather_allowed_in_memory_exec_executables"
+	IPToIDMapName                         = "bomfather_ip_to_id"
+	ExclusiveIPMaskMapName                = "bomfather_exclusive_ip_mask"
+	OpenatEventsMapName                   = "bomfather_openat_events"
+	ExecveEventsMapName                   = "bomfather_execve_events"
+	ViolationEventsMapName                = "bomfather_log_failures"
+	ContainerIDToContainerContextMapName  = "bomfather_container_id_to_container_context"
+	CgroupIDToContainerContextMapName     = "bomfather_cgroup_id_to_container_context"
+	ShouldStopLDEnvMapName                = "bomfather_should_stop_ld_env"
+	FileOpenJumpTableMapName              = "bomfather_file_open_jump_table"
+	MountCheckJumpTableMapName            = "bomfather_mount_check_jump_table"
+	ShouldOutputOpenatsMapName            = "bomfather_should_output_openats"
+	UserspaceProcessPIDMapName            = "bomfather_userspace_process_pid"
+	ShouldSecureMapsMapName               = "bomfather_should_secure_maps"
+	ShouldStopShutdownMapName             = "bomfather_should_stop_shutdown"
+	GlobalReadOnlyMapName                 = "bomfather_global_read_only"
+	GlobalReadOnlyChunkToIDMapName        = "bomfather_global_read_only_chunk_to_id"
+	RestrictedExecutableChunkToIDMapName  = "bomfather_restricted_executable_chunk_to_id"
+	RestrictedExecutableMapName           = "bomfather_restricted_executable"
+	BootIDMapName                         = "bomfather_boot_id"
+	DebugPrintingMapName                  = "bomfather_debug_config"
+	TrustedExecutablesMapName             = "bomfather_trusted_executables"
+	PythonIdentifierMapName               = "bomfather_python_identifier_id"
+	DirToIDMapName                        = "bomfather_dir_to_id"
+	ExecutableToIDMapName                 = "bomfather_executable_to_id"
+	RestrictGPUMapName                    = "bomfather_restrict_gpu_access"
+	BlockPtraceMapName                    = "bomfather_block_ptrace"
+	BlockInMemoryExecMapName              = "bomfather_block_in_memory_exec"
+	LDEnvAllowedExecutablesMapName        = "bomfather_ld_env_allowed_executables"
+	SecurityLevelMapName                  = "bomfather_security_level"
+	RestrictBPFOpsMapName                 = "bomfather_restrict_bpf_ops"
+	FsVerityPinlistMapName                = "bomfather_fsverity_pinlist"
+	AllowedBPFOpsExecutablesMapName       = "bomfather_allowed_bpf_ops_executables"
 )
 
 type Program any
@@ -223,6 +224,7 @@ var basePrograms = []Program{
 	&LSMProgram{ProgName: "lsm_socket_connect"},
 	&LSMProgram{ProgName: "lsm_sb_mount"},
 	&LSMProgram{ProgName: "lsm_mmap_file"},
+	&LSMProgram{ProgName: "lsm_file_mprotect"},
 	&LSMProgram{ProgName: "lsm_socket_recvmsg"},
 	&LSMProgram{ProgName: "lsm_socket_sendmsg"},
 }
@@ -651,6 +653,7 @@ func freezePolicyMaps(coll *ebpf.Collection) error {
 		TrustedExecutablesMapName,
 		LDEnvAllowedExecutablesMapName,
 		AllowedPtraceExecutablesMapName,
+		AllowedInMemoryExecExecutablesMapName,
 		DirToIDMapName,
 		ExecutableToIDMapName,
 		ExclusiveIPMaskMapName,
