@@ -147,6 +147,44 @@ func TestAllowedInMemoryExecAttributePopulatesMap(t *testing.T) {
 	}
 }
 
+func TestStandaloneAllowlistsDoNotRequirePolicy(t *testing.T) {
+	const executable = "/usr/bin/jit"
+	path := "type = executable | filepath = " + executable
+	mapper := NewPolicyIDMapper()
+	mapper.Set("", 0)
+	withSlash, withoutSlash, err := pathKeyFromString("filepath = "+executable, mapper)
+	if err != nil {
+		t.Fatalf("pathKeyFromString: %v", err)
+	}
+
+	mapsArray, _, _, _, err := parseConfigFromStruct(Config{Attributes: []Attribute{{
+		Path:                path,
+		AllowedInMemoryExec: true,
+		AllowedPtrace:       true,
+	}}}, false)
+	if err != nil {
+		t.Fatalf("parseConfigFromStruct: %v", err)
+	}
+
+	inMemory := mapEntries(t, mapsArray, agentebpf.AllowedInMemoryExecExecutablesMapName)
+	ptrace := mapEntries(t, mapsArray, agentebpf.AllowedPtraceExecutablesMapName)
+	if inMemory[withSlash] != uint32(1) || inMemory[withoutSlash] != uint32(1) {
+		t.Fatalf("in-memory allowlist = %#v", inMemory)
+	}
+	if ptrace[withSlash] != uint32(1) || ptrace[withoutSlash] != uint32(1) {
+		t.Fatalf("ptrace allowlist = %#v", ptrace)
+	}
+
+	_, _, _, _, err = parseConfigFromStruct(Config{Attributes: []Attribute{{
+		Path:                path,
+		AllowedInMemoryExec: true,
+		AllowedGPU:          true,
+	}}}, false)
+	if err == nil {
+		t.Fatal("attributes other than allowlists should still require a policy")
+	}
+}
+
 func TestAddToChunkEntriesUpdatesOnlyExactChunkKey(t *testing.T) {
 	firstChunkA := "/" + strings.Repeat("a", agentebpf.FILE_CHUNK_SIZE-1)
 	firstChunkB := "/" + strings.Repeat("b", agentebpf.FILE_CHUNK_SIZE-1)
