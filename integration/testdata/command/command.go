@@ -28,6 +28,9 @@ const (
 	PtraceTraceme                    = "ptrace-traceme"
 	PtraceTracemeChild               = "ptrace-traceme-child"
 	Tgkill                           = "tgkill"
+	MprotectAnon                     = "mprotect-anon"
+	MprotectFile                     = "mprotect-file"
+	MprotectNoExec                   = "mprotect-noexec"
 	ExitBlocked                      = 0
 	ExitAccessible                   = 10
 	ExitError                        = 2

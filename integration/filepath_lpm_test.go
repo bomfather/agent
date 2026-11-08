@@ -66,7 +66,6 @@ func TestRestrictedDirSharedPrefixSiblingIsIsolated(t *testing.T) {
 	assertReadDenied(t, h, fileB, "h read sibling dir; chunked path lookup aliased the grant")
 }
 
-
 func TestRestrictedDirShortPrefixSurvivesLongerSamePolicyPath(t *testing.T) {
 	if os.Getuid() != 0 {
 		t.Skip("test must be run as root")
@@ -132,7 +131,6 @@ func TestGlobalReadOnlyShortPrefixSurvivesLongerSameMapPath(t *testing.T) {
 		t.Fatalf("write to %s should be blocked by the shorter protected prefix: %v\n%s", queryPath, err, output.String())
 	}
 }
-
 
 func assertCanRead(t *testing.T, exe, path string) {
 	t.Helper()

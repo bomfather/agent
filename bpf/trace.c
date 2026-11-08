@@ -63,6 +63,7 @@ const volatile int pid_target = 0; // Volatile constant for the target PID; if 0
 #define VIOL_BPF_PIN 15
 
 #define VIOL_FSVERITY_DENIED 17
+#define VIOL_WX_DENIED 18
 
 #define FSVERITY_MAX_DIGEST_SIZE 64
 
@@ -89,6 +90,7 @@ const volatile int pid_target = 0; // Volatile constant for the target PID; if 0
 #define TEMP_CONTAINER_PATH_ALLOWED_PTRACE_EXECUTABLE 4
 #define TEMP_CONTAINER_PATH_FSVERITY 5
 #define TEMP_CONTAINER_PATH_ALLOWED_BPF_OPS_EXECUTABLE 6
+#define TEMP_CONTAINER_PATH_ALLOWED_IN_MEMORY_EXEC_EXECUTABLE 7
 
 // Index's for file_info temp map
 #define TEMP_FILE_INFO_FILE_OPEN 0
@@ -113,6 +115,8 @@ const volatile int pid_target = 0; // Volatile constant for the target PID; if 0
 // Define memory protection and mapping constants
 #define PROT_EXEC 0x4
 #define MAP_ANONYMOUS 0x20
+#define VM_WRITE 0x00000002
+#define VM_EXEC 0x00000004
 
 #define ACCESS_READ 1
 #define ACCESS_WRITE 2
@@ -398,6 +402,13 @@ struct {
     __type(value, u32);
 } bomfather_allowed_ptrace_executables SEC(".maps");
 
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 100);
+    __type(key, struct path_key);
+    __type(value, u32);
+} bomfather_allowed_in_memory_exec_executables SEC(".maps");
+
 // Executables allowed to perform restricted BPF operations (BPF_PROG_LOAD /
 // BPF_OBJ_PIN) even when bomfather_restrict_bpf_ops is enabled.
 struct {
@@ -623,7 +634,7 @@ struct {
 // Temporary storage for composite keys (avoid large stack frames)
 struct {
     __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
-    __uint(max_entries, 7);
+    __uint(max_entries, 8);
     __type(key, u32);
     __type(value, struct path_key);
 } bomfather_temp_path_key_map SEC(".maps");
@@ -1409,6 +1420,24 @@ static __always_inline void clear_procstat_gate(void)
     tctx->procstat_pid  = 0;
 }
 
+static __always_inline bool current_exe_allowed_in_memory_exec(void) {
+    struct task_struct *task = bpf_get_current_task_btf();
+    if (!task) {
+        return false;
+    }
+    struct task_ctx *tctx = get_task_ctx_safe(task);
+    if (!tctx) {
+        return false;
+    }
+    struct path_key *pkey = make_path_key_from_current_mnt_ns(
+        tctx->execve_event.exepath,
+        TEMP_CONTAINER_PATH_ALLOWED_IN_MEMORY_EXEC_EXECUTABLE);
+    if (!pkey) {
+        return false;
+    }
+    u32 *v = bpf_map_lookup_elem(&bomfather_allowed_in_memory_exec_executables, pkey);
+    return v && *v != 0;
+}
 static __always_inline int is_proc_pid_stat_inode(struct inode *inode, u32 *out_pid)
 {
     if (BPF_CORE_READ(inode, i_sb, s_magic) != PROC_SUPER_MAGIC) {
@@ -2955,5 +2984,37 @@ int BPF_PROG(lsm_mmap_file, struct file *file, unsigned long reqprot,
 
     return 0;
 }
+SEC("lsm/file_mprotect")
+int BPF_PROG(lsm_file_mprotect, struct vm_area_struct *vma, unsigned long reqprot, unsigned long prot) {
+    u32 zero = 0;
 
+    // If the mapping is not executable, return.
+    if (!(prot & PROT_EXEC)) { 
+        return 0;
+    }
+
+    u32 *block = bpf_map_lookup_elem(&bomfather_block_in_memory_exec, &zero);
+    if (!(block && *block)) {
+        return 0;
+    }
+
+    // This is already an executable, we dont need to deny anything.
+    vm_flags_t vm_flags = BPF_CORE_READ(vma, vm_flags);
+    if (vm_flags & VM_EXEC)
+        return 0;
+
+
+    if (current_exe_allowed_in_memory_exec()) {
+        return 0;
+    }
+    struct file *f = BPF_CORE_READ(vma, vm_file);
+    struct process_id process = {0};
+    get_process_id(&process);
+    if (f) {
+        push_violation("mprotect exec on file mapping", VIOL_WX_DENIED, &process);
+    } else {
+        push_violation("mprotect exec on anonymous mapping", VIOL_WX_DENIED, &process);
+    }
+    return return_value();
+}
 char LICENSE[] SEC("license") = "GPL"; // Program is licensed under GPL

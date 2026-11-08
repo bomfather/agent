@@ -86,6 +86,12 @@ func main() {
 		os.Exit(ptraceTracemeChild())
 	case command.Tgkill:
 		os.Exit(tgkill())
+	case command.MprotectAnon:
+		os.Exit(mprotectAnon())
+	case command.MprotectFile:
+		os.Exit(mprotectFile())
+	case command.MprotectNoExec:
+		os.Exit(mprotectNoExec())
 	default:
 		fmt.Fprintf(os.Stderr, "test_binary: unknown subcommand %q\n", os.Args[1])
 		os.Exit(2)
@@ -702,5 +708,59 @@ func tgkill() int {
 		return exitFor(err)
 	}
 	fmt.Fprintf(os.Stderr, "tgkill %d %d succeeded\n", tgid, tid)
+	return command.ExitAccessible
+}
+
+func mprotectAnon() int {
+	mapping, err := mapAnonymous(unix.PROT_READ | unix.PROT_WRITE)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "mmap anonymous: %v\n", err)
+		return command.ExitError
+	}
+	defer unix.Munmap(mapping)
+	return mprotectMapping(mapping, unix.PROT_READ|unix.PROT_EXEC, "anonymous exec")
+}
+
+func mprotectFile() int {
+	if len(os.Args) != 3 {
+		fmt.Fprintln(os.Stderr, "usage: test_binary mprotect-file PATH")
+		return command.ExitError
+	}
+	file, err := os.Open(os.Args[2])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "open %s: %v\n", os.Args[2], err)
+		return exitFor(err)
+	}
+	defer file.Close()
+
+	mapping, err := unix.Mmap(int(file.Fd()), 0, os.Getpagesize(), unix.PROT_READ, unix.MAP_PRIVATE)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "mmap %s: %v\n", os.Args[2], err)
+		return command.ExitError
+	}
+	defer unix.Munmap(mapping)
+	return mprotectMapping(mapping, unix.PROT_READ|unix.PROT_EXEC, "file exec")
+}
+
+func mprotectNoExec() int {
+	mapping, err := mapAnonymous(unix.PROT_READ | unix.PROT_WRITE)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "mmap anonymous: %v\n", err)
+		return command.ExitError
+	}
+	defer unix.Munmap(mapping)
+	return mprotectMapping(mapping, unix.PROT_READ|unix.PROT_WRITE, "anonymous write")
+}
+
+func mapAnonymous(prot int) ([]byte, error) {
+	return unix.Mmap(-1, 0, os.Getpagesize(), prot, unix.MAP_PRIVATE|unix.MAP_ANONYMOUS)
+}
+
+func mprotectMapping(mapping []byte, prot int, what string) int {
+	if err := unix.Mprotect(mapping, prot); err != nil {
+		fmt.Fprintf(os.Stderr, "mprotect %s: %v\n", what, err)
+		return exitFor(err)
+	}
+	fmt.Fprintf(os.Stderr, "mprotect %s succeeded\n", what)
 	return command.ExitAccessible
 }

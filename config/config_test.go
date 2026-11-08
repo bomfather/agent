@@ -84,6 +84,69 @@ func TestParseConfigFromStructIncludesAgentExecutable(t *testing.T) {
 	}
 }
 
+func TestAllowedInMemoryExecAttributePopulatesMap(t *testing.T) {
+	const executable = "/usr/bin/jit"
+	mapper := NewPolicyIDMapper()
+	mapper.Set("", 0)
+	withSlash, withoutSlash, err := pathKeyFromString("filepath = "+executable, mapper)
+	if err != nil {
+		t.Fatalf("pathKeyFromString: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		config  Config
+		wantSet bool
+	}{
+		{
+			name: "attribute alone writes both path keys",
+			config: Config{Attributes: []Attribute{{
+				Path:                "type = executable | filepath = " + executable,
+				AllowedInMemoryExec: true,
+			}}},
+			wantSet: true,
+		},
+		{
+			name: "attribute with a policy writes both path keys",
+			config: Config{
+				Policies: []Policy{{
+					Executable:  "filepath = " + executable,
+					Directories: []string{"/tmp: read"},
+				}},
+				Attributes: []Attribute{{
+					Path:                "type = executable | filepath = " + executable,
+					AllowedInMemoryExec: true,
+				}},
+			},
+			wantSet: true,
+		},
+		{
+			name:    "no attribute leaves the map empty",
+			config:  Config{},
+			wantSet: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mapsArray, _, _, _, err := parseConfigFromStruct(tt.config, false)
+			if err != nil {
+				t.Fatalf("parseConfigFromStruct: %v", err)
+			}
+			entries := mapEntries(t, mapsArray, agentebpf.AllowedInMemoryExecExecutablesMapName)
+			if !tt.wantSet {
+				if len(entries) != 0 {
+					t.Fatalf("want empty allowlist, got %d entries", len(entries))
+				}
+				return
+			}
+			if entries[withSlash] != uint32(1) || entries[withoutSlash] != uint32(1) {
+				t.Fatalf("want both path keys set to 1, got %#v", entries)
+			}
+		})
+	}
+}
+
 func TestAddToChunkEntriesUpdatesOnlyExactChunkKey(t *testing.T) {
 	firstChunkA := "/" + strings.Repeat("a", agentebpf.FILE_CHUNK_SIZE-1)
 	firstChunkB := "/" + strings.Repeat("b", agentebpf.FILE_CHUNK_SIZE-1)
@@ -141,12 +204,17 @@ func TestAddToChunkEntriesUpdatesOnlyExactChunkKey(t *testing.T) {
 
 func trustedExecutableEntries(t *testing.T, mapsArray []agentebpf.EBPFMapWrite) map[any]any {
 	t.Helper()
+	return mapEntries(t, mapsArray, agentebpf.TrustedExecutablesMapName)
+}
+
+func mapEntries(t *testing.T, mapsArray []agentebpf.EBPFMapWrite, name string) map[any]any {
+	t.Helper()
 	for _, m := range mapsArray {
-		if m.MapName == agentebpf.TrustedExecutablesMapName {
+		if m.MapName == name {
 			return m.Entries
 		}
 	}
-	t.Fatalf("trusted executables map missing")
+	t.Fatalf("map %s missing", name)
 	return nil
 }
 
