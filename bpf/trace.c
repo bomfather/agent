@@ -114,8 +114,8 @@ const volatile int pid_target = 0; // Volatile constant for the target PID; if 0
 
 // Define memory protection and mapping constants
 #define PROT_EXEC 0x4
+#define PROT_WRITE 0x2
 #define MAP_ANONYMOUS 0x20
-#define VM_WRITE 0x00000002
 #define VM_EXEC 0x00000004
 
 #define ACCESS_READ 1
@@ -1429,9 +1429,25 @@ static __always_inline bool current_exe_allowed_in_memory_exec(void) {
     if (!tctx) {
         return false;
     }
-    struct path_key *pkey = make_path_key_from_current_mnt_ns(
-        tctx->execve_event.exepath,
-        TEMP_CONTAINER_PATH_ALLOWED_IN_MEMORY_EXEC_EXECUTABLE);
+
+    struct path_key *pkey = NULL;
+    if (tctx->execve_event.exepath[0] != '\0') {
+        pkey = make_path_key_from_current_mnt_ns(
+            tctx->execve_event.exepath,
+            TEMP_CONTAINER_PATH_ALLOWED_IN_MEMORY_EXEC_EXECUTABLE);
+    } else {
+        struct file *exe_file = BPF_CORE_READ(task, mm, exe_file);
+        if (!exe_file) {
+            return false;
+        }
+        char *exe_path = get_filename_from_path(&exe_file->f_path, TEMP_FILEPATH_TASK_EXE_FALLBACK, NULL);
+        if (!exe_path) {
+            return false;
+        }
+        pkey = make_path_key_from_current_mnt_ns(
+            exe_path,
+            TEMP_CONTAINER_PATH_ALLOWED_IN_MEMORY_EXEC_EXECUTABLE);
+    }
     if (!pkey) {
         return false;
     }
@@ -2988,8 +3004,7 @@ SEC("lsm/file_mprotect")
 int BPF_PROG(lsm_file_mprotect, struct vm_area_struct *vma, unsigned long reqprot, unsigned long prot) {
     u32 zero = 0;
 
-    // If the mapping is not executable, return.
-    if (!(prot & PROT_EXEC)) { 
+    if (!(prot & PROT_EXEC)) {
         return 0;
     }
 
@@ -2998,11 +3013,9 @@ int BPF_PROG(lsm_file_mprotect, struct vm_area_struct *vma, unsigned long reqpro
         return 0;
     }
 
-    // This is already an executable, we dont need to deny anything.
     vm_flags_t vm_flags = BPF_CORE_READ(vma, vm_flags);
-    if (vm_flags & VM_EXEC)
+    if ((vm_flags & VM_EXEC) && !(prot & PROT_WRITE))
         return 0;
-
 
     if (current_exe_allowed_in_memory_exec()) {
         return 0;

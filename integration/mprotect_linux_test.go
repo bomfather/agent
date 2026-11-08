@@ -50,16 +50,28 @@ func TestMprotectExec(t *testing.T) {
 	}
 	anonAllowed := runPtraceHelper(t, helper, command.MprotectAnon) == command.ExitAccessible
 	fileAllowed := runPtraceHelper(t, helper, command.MprotectFile, payload) == command.ExitAccessible
-	if !anonAllowed {
-		t.Log("host denies anonymous mprotect exec; that vector cannot be attributed to the agent")
-	}
-	if !fileAllowed {
-		t.Log("host denies file mprotect exec; that vector cannot be attributed to the agent")
-	}
 
 	t.Run("block off", func(t *testing.T) {
 		runAgent(t, mprotectPolicy(helper, dir, false, false))
-		expectMprotect(t, helper, payload, anonAllowed, fileAllowed, command.ExitAccessible)
+		if code := runPtraceHelper(t, helper, command.MprotectNoExec); code != command.ExitAccessible {
+			t.Fatalf("mprotect without execute should stay allowed, got exit %d", code)
+		}
+		t.Run("anon", func(t *testing.T) {
+			if !anonAllowed {
+				t.Skip("host denies anonymous mprotect exec")
+			}
+			if code := runPtraceHelper(t, helper, command.MprotectAnon); code != command.ExitAccessible {
+				t.Fatalf("anonymous mprotect exec = %d, want %d", code, command.ExitAccessible)
+			}
+		})
+		t.Run("file", func(t *testing.T) {
+			if !fileAllowed {
+				t.Skip("host denies file mprotect exec")
+			}
+			if code := runPtraceHelper(t, helper, command.MprotectFile, payload); code != command.ExitAccessible {
+				t.Fatalf("file mprotect exec = %d, want %d", code, command.ExitAccessible)
+			}
+		})
 	})
 
 	t.Run("block on", func(t *testing.T) {
@@ -81,23 +93,24 @@ func TestMprotectExec(t *testing.T) {
 
 	t.Run("allowlisted", func(t *testing.T) {
 		runAgent(t, mprotectPolicy(helper, dir, true, true))
-		expectMprotect(t, helper, payload, anonAllowed, fileAllowed, command.ExitAccessible)
+		if code := runPtraceHelper(t, helper, command.MprotectNoExec); code != command.ExitAccessible {
+			t.Fatalf("mprotect without execute should stay allowed, got exit %d", code)
+		}
+		t.Run("anon", func(t *testing.T) {
+			if !anonAllowed {
+				t.Skip("host denies anonymous mprotect exec")
+			}
+			if code := runPtraceHelper(t, helper, command.MprotectAnon); code != command.ExitAccessible {
+				t.Fatalf("anonymous mprotect exec = %d, want %d", code, command.ExitAccessible)
+			}
+		})
+		t.Run("file", func(t *testing.T) {
+			if !fileAllowed {
+				t.Skip("host denies file mprotect exec")
+			}
+			if code := runPtraceHelper(t, helper, command.MprotectFile, payload); code != command.ExitAccessible {
+				t.Fatalf("file mprotect exec = %d, want %d", code, command.ExitAccessible)
+			}
+		})
 	})
-}
-
-func expectMprotect(t *testing.T, helper, payload string, anon, file bool, want int) {
-	t.Helper()
-	if code := runPtraceHelper(t, helper, command.MprotectNoExec); code != command.ExitAccessible {
-		t.Fatalf("mprotect-noexec = %d, want %d", code, command.ExitAccessible)
-	}
-	if anon {
-		if code := runPtraceHelper(t, helper, command.MprotectAnon); code != want {
-			t.Fatalf("mprotect-anon = %d, want %d", code, want)
-		}
-	}
-	if file {
-		if code := runPtraceHelper(t, helper, command.MprotectFile, payload); code != want {
-			t.Fatalf("mprotect-file = %d, want %d", code, want)
-		}
-	}
 }

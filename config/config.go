@@ -1052,15 +1052,17 @@ func parseConfigFromStruct(config Config, debugEnabled bool) ([]agentebpf.EBPFMa
 				allowedInMemoryExecExecutables.Entries[pathKeyWithSlash] = uint32(1)
 				allowedInMemoryExecExecutables.Entries[pathKeyWithoutSlash] = uint32(1)
 			}
+			if attribute.AllowedPtrace {
+				allowedPtraceExecutables.Entries[pathKeyWithSlash] = uint32(1)
+				allowedPtraceExecutables.Entries[pathKeyWithoutSlash] = uint32(1)
+			}
 
 			var accessControl AccessControlValue
 			accessControl, ok := trustedExecutables.Entries[pathKeyWithSlash].(AccessControlValue)
 			if !ok {
-				// These exemptions only write their own allowlist maps. An
-				// executable with no other attribute needs no access-control entry.
-				if (attribute.AllowedBPFOps || attribute.AllowedInMemoryExec) &&
-					!attribute.AllowedGPU && !attribute.AllowedPtrace &&
-					!attribute.AllowedLDEnv && !attribute.OutputOpenats && len(attribute.CanOnlyAccessIPs) == 0 {
+				if (attribute.AllowedBPFOps || attribute.AllowedInMemoryExec || attribute.AllowedPtrace) &&
+					!attribute.AllowedGPU && !attribute.AllowedLDEnv &&
+					!attribute.OutputOpenats && len(attribute.CanOnlyAccessIPs) == 0 {
 					continue
 				}
 				return nil, nil, nil, nil, fmt.Errorf("failed to get access control value for path key %v", pathKeyWithSlash)
@@ -1068,10 +1070,6 @@ func parseConfigFromStruct(config Config, debugEnabled bool) ([]agentebpf.EBPFMa
 			if attribute.AllowedGPU {
 				accessControl.GPU = 1
 
-			}
-			if attribute.AllowedPtrace {
-				allowedPtraceExecutables.Entries[pathKeyWithSlash] = uint32(1)
-				allowedPtraceExecutables.Entries[pathKeyWithoutSlash] = uint32(1)
 			}
 			if attribute.AllowedLDEnv {
 				ldEnvAllowedExecutables.Entries[pathKeyWithSlash] = uint32(1)
