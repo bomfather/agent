@@ -15,6 +15,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/asm"
@@ -66,6 +67,12 @@ func main() {
 		os.Exit(updateMap(mapsPidArg(), mapsNameArg()))
 	case command.LoadProg:
 		os.Exit(loadProg())
+	case command.GetLinkFD:
+		os.Exit(probeBPFLinkOp(command.GetLinkFD))
+	case command.UpdateLink:
+		os.Exit(probeBPFLinkOp(command.UpdateLink))
+	case command.DetachLink:
+		os.Exit(probeBPFLinkOp(command.DetachLink))
 	case command.Sleep:
 		// fd 3 is the readiness pipe from startProtectedChild. Writing it means
 		// this exec has finished, so the agent's exec hook has already run.
@@ -572,6 +579,45 @@ func loadProg() int {
 	}
 	prog.Close()
 	fmt.Fprintln(os.Stderr, "BPF_PROG_LOAD succeeded")
+	return command.ExitAccessible
+}
+
+func probeBPFLinkOp(op string) int {
+	invalid := ^uint32(0) // turning a uint32 into a huge value by flipping all of the bits
+	attr := struct {
+		LinkFD    uint32
+		NewProgFD uint32
+		Flags     uint32
+		OldProgFD uint32
+	}{
+		LinkFD:    invalid,
+		NewProgFD: invalid,
+	}
+
+	var (
+		cmd  uintptr
+		size = unsafe.Sizeof(attr.LinkFD)
+	)
+
+	switch op {
+	case command.GetLinkFD:
+		cmd = unix.BPF_LINK_GET_FD_BY_ID
+	case command.UpdateLink:
+		cmd = unix.BPF_LINK_UPDATE
+		size = unsafe.Sizeof(attr)
+	case command.DetachLink:
+		cmd = unix.BPF_LINK_DETACH
+	default:
+		fmt.Fprintf(os.Stderr, "unknown BPF link operation %q\n", op)
+		return command.ExitError
+	}
+
+	_, _, errno := unix.Syscall(unix.SYS_BPF, cmd, uintptr(unsafe.Pointer(&attr)), size)
+	if errno == syscall.EPERM {
+		fmt.Fprintf(os.Stderr, "%s denied: %v\n", op, errno)
+		return command.ExitBlocked
+	}
+	fmt.Fprintf(os.Stderr, "%s reached kernel validation: %v\n", op, errno)
 	return command.ExitAccessible
 }
 
