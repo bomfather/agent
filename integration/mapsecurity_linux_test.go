@@ -203,3 +203,49 @@ func TestBPFProgLoadAllowlist(t *testing.T) {
 		}
 	})
 }
+
+func TestBPFLinkOperations(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("requires root")
+	}
+
+	helper := buildTestBinary(t)
+	operations := []string{
+		command.GetLinkFD,
+		command.UpdateLink,
+		command.DetachLink,
+	}
+
+	t.Run("not allowlisted: link operations are blocked", func(t *testing.T) {
+		_, stop := runMapSecurityAgent(t, securedPolicy)
+		defer stop()
+
+		for _, operation := range operations {
+			if code := runMapsHelper(t, helper, operation); code != command.ExitBlocked {
+				t.Errorf("%s should be blocked, got exit %d (want %d)", operation, code, command.ExitBlocked)
+			}
+		}
+	})
+
+	t.Run("allowlisted: link operations reach kernel validation", func(t *testing.T) {
+		_, stop := runMapSecurityAgent(t, bpfOpsAllowlistPolicy(helper))
+		defer stop()
+
+		for _, operation := range operations {
+			if code := runMapsHelper(t, helper, operation); code != command.ExitAccessible {
+				t.Errorf("%s should pass the BPF policy, got exit %d (want %d)", operation, code, command.ExitAccessible)
+			}
+		}
+	})
+
+	t.Run("bpf ops unrestricted: link operations reach kernel validation", func(t *testing.T) {
+		_, stop := runMapSecurityAgent(t, unrestrictedBPFOpsPolicy)
+		defer stop()
+
+		for _, operation := range operations {
+			if code := runMapsHelper(t, helper, operation); code != command.ExitAccessible {
+				t.Errorf("%s should pass when BPF restrictions are off, got exit %d (want %d)", operation, code, command.ExitAccessible)
+			}
+		}
+	})
+}
