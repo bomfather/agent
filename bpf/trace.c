@@ -1843,6 +1843,9 @@ static __always_inline bool is_allowed_bpf_ops_executable(void) {
 
 static __always_inline bool enforce_bpf_op_policy(int cmd) {
     if (cmd != BPF_PROG_LOAD && cmd != BPF_OBJ_PIN &&
+        cmd != BPF_LINK_GET_FD_BY_ID &&
+        cmd != BPF_LINK_UPDATE &&
+        cmd != BPF_LINK_DETACH &&
         cmd != BPF_MAP_UPDATE_ELEM &&
         cmd != BPF_MAP_DELETE_ELEM &&
         cmd != BPF_MAP_LOOKUP_AND_DELETE_ELEM &&
